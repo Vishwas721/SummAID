@@ -1,39 +1,42 @@
+import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy import create_engine
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker
 from dotenv import load_dotenv
-import os
 
 # Load environment variables
 load_dotenv()
 
-app = FastAPI()
+# --- Configuration Loading & Validation ---
+DATABASE_URL = os.getenv("DATABASE_URL")
+ENCRYPTION_KEY = os.getenv("ENCRYPTION_KEY")
+# Default to Vite's default port if not specified
+FRONTEND_ORIGIN = os.getenv("FRONTEND_ORIGIN", "http://localhost:5173")
 
-# Configure CORS
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["http://localhost:5173"],  # Vite's default port
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+if not DATABASE_URL or not ENCRYPTION_KEY:
+    raise ValueError("DATABASE_URL and ENCRYPTION_KEY must be set in .env file")
+# --- End Configuration ---
+
+
+# Initialize FastAPI app
+app = FastAPI(
+    title="SummAID API",
+    description="Backend for the v3-lite Canned Demo",
+    version="0.1.0"
 )
 
-# Database configuration
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/summaid")
-engine = create_engine(DATABASE_URL)
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-Base = declarative_base()
+# Add CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[FRONTEND_ORIGIN],  # Explicitly allow our React app's origin
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "OPTIONS"], # Be explicit instead of "*"
+    allow_headers=["*"], # Can be tightened later if needed
+)
 
-# Dependency
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
-
+# Root endpoint
 @app.get("/")
 def read_root():
-    return {"message": "Welcome to SummAID API"}
+    """
+    Root health check endpoint.
+    """
+    return {"status": "ok", "message": "SummAID API is running."}
