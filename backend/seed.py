@@ -123,14 +123,20 @@ def get_embedding(text: str) -> List[float]:
     Get vector embedding using Ollama REST API.
     """
     response = requests.post(
-        "http://localhost:11434/api/embeddings",
-        json={"model": OLLAMA_EMBED_MODEL, "prompt": text}
+        "http://localhost:11434/api/embed",
+        json={"model": OLLAMA_EMBED_MODEL, "input": text}
     )
     if response.status_code != 200:
         raise Exception(f"Failed to get embedding: {response.text}")
     
     data = response.json()
-    return data["embedding"]
+    # Handle both 'embedding' and 'embeddings' response formats
+    if 'embedding' in data:
+        return data['embedding']
+    elif 'embeddings' in data:
+        return data['embeddings'][0] if isinstance(data['embeddings'], list) else data['embeddings']
+    else:
+        raise Exception(f"Unexpected embed response format: {data.keys()}")
 
 def main():
     # Connect to database

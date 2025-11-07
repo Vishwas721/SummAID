@@ -1,5 +1,6 @@
 import os
 import json
+import logging
 from typing import List, Optional
 from fastapi import FastAPI, HTTPException, Body, Path
 from fastapi.middleware.cors import CORSMiddleware
@@ -7,6 +8,10 @@ from dotenv import load_dotenv
 from database import get_db_connection
 import requests
 from pydantic import BaseModel, Field
+
+# Configure logging
+logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 # Load environment variables
 load_dotenv()
@@ -150,97 +155,126 @@ async def summarize_patient(
     payload: SummarizeRequest = Body(default=SummarizeRequest())
 ):
     """Skeleton summarization endpoint performing basic hybrid search + generation."""
-    # 1. Build embedding for a generic summarization intent (could be enhanced with keywords)
-    embed_basis = " ".join(payload.keywords) if payload.keywords else f"summary {patient_demo_id}"
-    query_embedding = _embed_text(embed_basis)
-    if len(query_embedding) != 768:
-        # Warn mismatch early
-        raise HTTPException(status_code=500, detail=f"Embedding dimension {len(query_embedding)} != 768 schema expectation")
-
-    # Convert embedding to pgvector literal string
-    embedding_literal = '[' + ','.join(f'{x:.6f}' for x in query_embedding) + ']'
-
-    conn = None
-    similarity_chunks: List[str] = []
-    keyword_chunks: List[str] = []
     try:
-        conn = get_db_connection()
-        cur = conn.cursor()
+        # 1. Build embedding for a generic summarization intent (could be enhanced with keywords)
+        embed_basis = " ".join(payload.keywords) if payload.keywords else f"summary {patient_demo_id}"
+        query_embedding = _embed_text(embed_basis)
+        if len(query_embedding) != 768:
+            # Warn mismatch early
+            raise HTTPException(status_code=500, detail=f"Embedding dimension {len(query_embedding)} != 768 schema expectation")
 
-        # 2. Similarity search limited
-        cur.execute(
-            f"""
-            WITH q AS (SELECT %s::vector(768) AS qv)
-            SELECT pgp_sym_decrypt(c.chunk_text_encrypted, %s)::text AS chunk_text,
-                   (c.report_vector <=> q.qv) AS distance
-            FROM report_chunks c
-            JOIN reports r ON r.report_id = c.report_id
-            JOIN q ON TRUE
-            WHERE r.patient_demo_id = %s
-            ORDER BY c.report_vector <=> q.qv
-            LIMIT %s
-            """,
-            (embedding_literal, ENCRYPTION_KEY, patient_demo_id, payload.max_chunks)
-        )
-        similarity_rows = cur.fetchall()
-        similarity_chunks = [row[0] for row in similarity_rows if row and row[0]]
+        # Convert embedding to pgvector literal string
+        embedding_literal = '[' + ','.join(f'{x:.6f}' for x in query_embedding) + ']'
 
-        # 3. Keyword search (if any)
-        if payload.keywords:
-            patterns = [f"%{kw}%" for kw in payload.keywords]
-            ors = " OR ".join([f"pgp_sym_decrypt(c.chunk_text_encrypted, %s)::text ILIKE %s" for _ in patterns])
-            params: List[str] = []
-            for p in patterns:
-                params.extend([ENCRYPTION_KEY, p])
-            sql = f"""
-                SELECT DISTINCT pgp_sym_decrypt(c.chunk_text_encrypted, %s)::text AS chunk_text
+        conn = None
+        similarity_chunks: List[tuple] = []  # Will store (chunk_text, metadata, filepath)
+        keyword_chunks: List[tuple] = []     # Will store (chunk_text, metadata, filepath)
+        try:
+            conn = get_db_connection()
+            cur = conn.cursor()
+
+            # 2. Similarity search limited - NOW INCLUDING METADATA AND FILEPATH
+            cur.execute(
+                f"""
+                WITH q AS (SELECT %s::vector(768) AS qv)
+                SELECT pgp_sym_decrypt(c.chunk_text_encrypted, %s)::text AS chunk_text,
+                       c.source_metadata,
+                       r.report_filepath_pointer,
+                       (c.report_vector <=> q.qv) AS distance
                 FROM report_chunks c
                 JOIN reports r ON r.report_id = c.report_id
-                WHERE r.patient_demo_id = %s AND ( {ors} )
-            """.replace('%s)::text ILIKE %s', '%s)::text ILIKE %s')  # keep placeholders stable
-            # Build final parameters: first decrypt key for DISTINCT select, patient id, then repeated pairs
-            final_params = [ENCRYPTION_KEY, patient_demo_id] + params
-            cur.execute(sql, final_params)
-            keyword_rows = cur.fetchall()
-            keyword_chunks = [row[0] for row in keyword_rows if row and row[0]]
-        cur.close()
+                JOIN q ON TRUE
+                WHERE r.patient_demo_id = %s
+                ORDER BY c.report_vector <=> q.qv
+                LIMIT %s
+                """,
+                (embedding_literal, ENCRYPTION_KEY, patient_demo_id, payload.max_chunks)
+            )
+            similarity_rows = cur.fetchall()
+            similarity_chunks = [(row[0], row[1], row[2]) for row in similarity_rows if row and row[0]]
+
+            # 3. Keyword search (if any) - NOW INCLUDING METADATA AND FILEPATH
+            if payload.keywords:
+                patterns = [f"%{kw}%" for kw in payload.keywords]
+                ors = " OR ".join([f"pgp_sym_decrypt(c.chunk_text_encrypted, %s)::text ILIKE %s" for _ in patterns])
+                params: List[str] = []
+                for p in patterns:
+                    params.extend([ENCRYPTION_KEY, p])
+                sql = f"""
+                    SELECT DISTINCT pgp_sym_decrypt(c.chunk_text_encrypted, %s)::text AS chunk_text,
+                           c.source_metadata,
+                           r.report_filepath_pointer
+                    FROM report_chunks c
+                    JOIN reports r ON r.report_id = c.report_id
+                    WHERE r.patient_demo_id = %s AND ( {ors} )
+                """.replace('%s)::text ILIKE %s', '%s)::text ILIKE %s')  # keep placeholders stable
+                # Build final parameters: first decrypt key for DISTINCT select, patient id, then repeated pairs
+                final_params = [ENCRYPTION_KEY, patient_demo_id] + params
+                cur.execute(sql, final_params)
+                keyword_rows = cur.fetchall()
+                keyword_chunks = [(row[0], row[1], row[2]) for row in keyword_rows if row and row[0]]
+            cur.close()
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Database hybrid search error: {e}")
+        finally:
+            if conn:
+                conn.close()
+
+        # 4. Merge & trim context - NOW PRESERVING CITATIONS
+        seen = set()
+        merged: List[tuple] = []  # List of (chunk_text, metadata, filepath)
+        for source_list in (keyword_chunks, similarity_chunks):  # prioritize keyword matches first
+            for chunk_tuple in source_list:
+                chunk_text = chunk_tuple[0]
+                key = chunk_text[:200]
+                if key in seen:
+                    continue
+                seen.add(key)
+                merged.append(chunk_tuple)
+        
+        # Limit by character budget
+        context_accum: List[tuple] = []  # List of (chunk_text, metadata, filepath)
+        total_chars = 0
+        for chunk_tuple in merged:
+            chunk_text = chunk_tuple[0]
+            if total_chars + len(chunk_text) > payload.max_context_chars:
+                break
+            context_accum.append(chunk_tuple)
+            total_chars += len(chunk_text)
+        
+        if not context_accum:
+            raise HTTPException(status_code=404, detail=f"No chunks found for patient_demo_id={patient_demo_id}")
+
+        # 5. Generate summary - extract just text for generation
+        context_texts = [chunk_tuple[0] for chunk_tuple in context_accum]
+        summary_text = _generate_summary(context_texts, patient_demo_id)
+
+        # 6. Build sources list for Glass Box transparency
+        sources = []
+        for chunk_tuple in context_accum:
+            try:
+                sources.append({
+                    "metadata": chunk_tuple[1] if len(chunk_tuple) > 1 else {},
+                    "filepath": chunk_tuple[2] if len(chunk_tuple) > 2 else None
+                })
+            except (IndexError, TypeError) as e:
+                # Log but don't fail if citation data is malformed
+                print(f"Warning: Could not extract citation for chunk: {e}")
+                sources.append({"metadata": {}, "filepath": None})
+
+        return {
+            "patient_demo_id": patient_demo_id,
+            "model": GEN_MODEL,
+            "embedding_model": EMBED_MODEL,
+            "chunks_used": len(context_accum),
+            "total_context_chars": total_chars,
+            "summary": summary_text,
+            "sources": sources  # GLASS BOX: Every statement must be citable
+        }
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Database hybrid search error: {e}")
-    finally:
-        if conn:
-            conn.close()
-
-    # 4. Merge & trim context
-    seen = set()
-    merged: List[str] = []
-    for source_list in (keyword_chunks, similarity_chunks):  # prioritize keyword matches first
-        for chunk in source_list:
-            key = chunk[:200]
-            if key in seen:
-                continue
-            seen.add(key)
-            merged.append(chunk.strip())
-    # Limit by character budget
-    context_accum: List[str] = []
-    total_chars = 0
-    for ch in merged:
-        if total_chars + len(ch) > payload.max_context_chars:
-            break
-        context_accum.append(ch)
-        total_chars += len(ch)
-    if not context_accum:
-        raise HTTPException(status_code=404, detail=f"No chunks found for patient_demo_id={patient_demo_id}")
-
-    # 5. Generate summary
-    summary_text = _generate_summary(context_accum, patient_demo_id)
-
-    return {
-        "patient_demo_id": patient_demo_id,
-        "model": GEN_MODEL,
-        "embedding_model": EMBED_MODEL,
-        "chunks_used": len(context_accum),
-        "total_context_chars": total_chars,
-        "summary": summary_text
-    }
+        logger.exception(f"Summarization error for patient {patient_demo_id}")
+        raise HTTPException(status_code=500, detail=f"Summarization error: {str(e)}")
