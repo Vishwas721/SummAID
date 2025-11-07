@@ -1,8 +1,18 @@
-# React + Vite
+# SummAID Frontend
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+This is the frontend application for SummAID, built with React + Vite.
 
-Currently, two official plugins are available:
+## Environment Configuration
+
+The application uses environment variables for configuration. Create a `.env` file in the frontend directory with the following variables:
+
+```env
+VITE_API_URL=http://localhost:8000  # Backend API URL
+```
+
+## Development Setup
+
+The project uses Vite with the following official plugins:
 
 - [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
 - [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh

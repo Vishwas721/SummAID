@@ -8,7 +8,13 @@ load_dotenv()
 
 # --- Configuration Loading & Validation ---
 DATABASE_URL = os.getenv("DATABASE_URL")
+
+# ⚠️ SECURITY WARNING ⚠️
+# This .env-based encryption key management is STRICTLY for Phase 1 prototype only.
+# MUST be replaced with HashiCorp Vault HA Cluster using Transit Engine before ANY pilot
+# with real data or production deployment. See Project Constitution Phase 2 Production Blueprint.
 ENCRYPTION_KEY = os.getenv("ENCRYPTION_KEY")
+
 # Default to Vite's default port if not specified
 FRONTEND_ORIGIN = os.getenv("FRONTEND_ORIGIN", "http://localhost:5173")
 
@@ -29,14 +35,12 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[FRONTEND_ORIGIN],  # Explicitly allow our React app's origin
     allow_credentials=True,
-    allow_methods=["GET", "POST", "OPTIONS"], # Be explicit instead of "*"
-    allow_headers=["*"], # Can be tightened later if needed
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
-# Root endpoint
 @app.get("/")
-def read_root():
-    """
-    Root health check endpoint.
-    """
+async def health_check():
+    """Health check endpoint"""
+    return {"status": "ok", "message": "SummAID API is running."}
     return {"status": "ok", "message": "SummAID API is running."}
