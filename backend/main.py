@@ -1,8 +1,12 @@
 import os
-from fastapi import FastAPI, HTTPException
+import json
+from typing import List, Optional
+from fastapi import FastAPI, HTTPException, Body, Path
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 from database import get_db_connection
+import requests
+from pydantic import BaseModel, Field
 
 # Load environment variables
 load_dotenv()
@@ -74,3 +78,169 @@ async def get_patients():
     finally:
         if conn:
             conn.close()
+
+
+# ---------- Summarization (Skeleton) ----------
+EMBED_MODEL = os.getenv("EMBED_MODEL", "nomic-embed-text")  # 768-dim
+GEN_MODEL = os.getenv("GEN_MODEL", "llama3:8b")  # generation model via Ollama
+
+class SummarizeRequest(BaseModel):
+    keywords: Optional[List[str]] = Field(default=None, description="Optional keyword filters for hybrid search")
+    max_chunks: int = Field(default=12, ge=1, le=50, description="Maximum number of chunks from similarity search")
+    max_context_chars: int = Field(default=12000, ge=500, le=60000, description="Max characters of context sent to model")
+
+def _embed_text(text: str) -> List[float]:
+    """Call local Ollama embed endpoint and return embedding (list of floats)."""
+    try:
+        resp = requests.post(
+            "http://localhost:11434/api/embed",
+            json={"model": EMBED_MODEL, "input": text}, timeout=60
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Embedding service error: {e}")
+    try:
+        data = resp.json()
+    except Exception:
+        raise HTTPException(status_code=500, detail=f"Non-JSON response from embed endpoint: {resp.text[:200]}")
+    if resp.status_code != 200:
+        raise HTTPException(status_code=500, detail=f"Embedding error: {data}")
+    # Support either 'embedding' or 'embeddings'
+    if 'embedding' in data:
+        return data['embedding']
+    if 'embeddings' in data:
+        # take first if list of lists
+        emb = data['embeddings']
+        return emb[0] if isinstance(emb, list) else emb
+    raise HTTPException(status_code=500, detail=f"Embedding key missing in response: {data}")
+
+def _generate_summary(context_chunks: List[str], patient_demo_id: str) -> str:
+    """Call local Ollama generate endpoint to produce a summary from provided context."""
+    # Basic prompt (Phase 1 skeleton) – can be refined later
+    joined = "\n\n".join(context_chunks)
+    prompt = (
+        f"You are a clinical summarization assistant. Produce a concise, factual summary for patient '{patient_demo_id}'.\n"
+        f"Use only the information in the provided context.\n"
+        f"Context:\n{joined}\n\nSummary:" )
+    try:
+        resp = requests.post(
+            "http://localhost:11434/api/generate",
+            json={
+                "model": GEN_MODEL,
+                "prompt": prompt,
+                "stream": False
+            }, timeout=120
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Generation service error: {e}")
+    try:
+        data = resp.json()
+    except Exception:
+        raise HTTPException(status_code=500, detail=f"Non-JSON response from generate endpoint: {resp.text[:200]}")
+    if resp.status_code != 200:
+        raise HTTPException(status_code=500, detail=f"Generation error: {data}")
+    # Ollama /api/generate returns {'response': '...'}
+    summary = data.get('response') or data.get('output') or ''
+    if not summary:
+        raise HTTPException(status_code=500, detail=f"Empty summary response: {data}")
+    return summary.strip()
+
+@app.post("/summarize/{patient_demo_id}")
+async def summarize_patient(
+    patient_demo_id: str = Path(..., description="The patient_demo_id to summarize"),
+    payload: SummarizeRequest = Body(default=SummarizeRequest())
+):
+    """Skeleton summarization endpoint performing basic hybrid search + generation."""
+    # 1. Build embedding for a generic summarization intent (could be enhanced with keywords)
+    embed_basis = " ".join(payload.keywords) if payload.keywords else f"summary {patient_demo_id}"
+    query_embedding = _embed_text(embed_basis)
+    if len(query_embedding) != 768:
+        # Warn mismatch early
+        raise HTTPException(status_code=500, detail=f"Embedding dimension {len(query_embedding)} != 768 schema expectation")
+
+    # Convert embedding to pgvector literal string
+    embedding_literal = '[' + ','.join(f'{x:.6f}' for x in query_embedding) + ']'
+
+    conn = None
+    similarity_chunks: List[str] = []
+    keyword_chunks: List[str] = []
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+
+        # 2. Similarity search limited
+        cur.execute(
+            f"""
+            WITH q AS (SELECT %s::vector(768) AS qv)
+            SELECT pgp_sym_decrypt(c.chunk_text_encrypted, %s)::text AS chunk_text,
+                   (c.report_vector <=> q.qv) AS distance
+            FROM report_chunks c
+            JOIN reports r ON r.report_id = c.report_id
+            JOIN q ON TRUE
+            WHERE r.patient_demo_id = %s
+            ORDER BY c.report_vector <=> q.qv
+            LIMIT %s
+            """,
+            (embedding_literal, ENCRYPTION_KEY, patient_demo_id, payload.max_chunks)
+        )
+        similarity_rows = cur.fetchall()
+        similarity_chunks = [row[0] for row in similarity_rows if row and row[0]]
+
+        # 3. Keyword search (if any)
+        if payload.keywords:
+            patterns = [f"%{kw}%" for kw in payload.keywords]
+            ors = " OR ".join([f"pgp_sym_decrypt(c.chunk_text_encrypted, %s)::text ILIKE %s" for _ in patterns])
+            params: List[str] = []
+            for p in patterns:
+                params.extend([ENCRYPTION_KEY, p])
+            sql = f"""
+                SELECT DISTINCT pgp_sym_decrypt(c.chunk_text_encrypted, %s)::text AS chunk_text
+                FROM report_chunks c
+                JOIN reports r ON r.report_id = c.report_id
+                WHERE r.patient_demo_id = %s AND ( {ors} )
+            """.replace('%s)::text ILIKE %s', '%s)::text ILIKE %s')  # keep placeholders stable
+            # Build final parameters: first decrypt key for DISTINCT select, patient id, then repeated pairs
+            final_params = [ENCRYPTION_KEY, patient_demo_id] + params
+            cur.execute(sql, final_params)
+            keyword_rows = cur.fetchall()
+            keyword_chunks = [row[0] for row in keyword_rows if row and row[0]]
+        cur.close()
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Database hybrid search error: {e}")
+    finally:
+        if conn:
+            conn.close()
+
+    # 4. Merge & trim context
+    seen = set()
+    merged: List[str] = []
+    for source_list in (keyword_chunks, similarity_chunks):  # prioritize keyword matches first
+        for chunk in source_list:
+            key = chunk[:200]
+            if key in seen:
+                continue
+            seen.add(key)
+            merged.append(chunk.strip())
+    # Limit by character budget
+    context_accum: List[str] = []
+    total_chars = 0
+    for ch in merged:
+        if total_chars + len(ch) > payload.max_context_chars:
+            break
+        context_accum.append(ch)
+        total_chars += len(ch)
+    if not context_accum:
+        raise HTTPException(status_code=404, detail=f"No chunks found for patient_demo_id={patient_demo_id}")
+
+    # 5. Generate summary
+    summary_text = _generate_summary(context_accum, patient_demo_id)
+
+    return {
+        "patient_demo_id": patient_demo_id,
+        "model": GEN_MODEL,
+        "embedding_model": EMBED_MODEL,
+        "chunks_used": len(context_accum),
+        "total_context_chars": total_chars,
+        "summary": summary_text
+    }
