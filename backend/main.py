@@ -1,7 +1,8 @@
 import os
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
+from database import get_db_connection
 
 # Load environment variables
 load_dotenv()
@@ -43,4 +44,33 @@ app.add_middleware(
 async def health_check():
     """Health check endpoint"""
     return {"status": "ok", "message": "SummAID API is running."}
-    return {"status": "ok", "message": "SummAID API is running."}
+
+@app.get("/patients")
+async def get_patients():
+    """
+    Get list of all unique patient demo IDs from the reports table.
+    Returns a JSON array of patient_demo_id strings.
+    """
+    conn = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        
+        # Query for unique patient_demo_ids, sorted alphabetically
+        cur.execute("""
+            SELECT DISTINCT patient_demo_id 
+            FROM reports 
+            ORDER BY patient_demo_id
+        """)
+        
+        # Extract just the patient_demo_id values into a list
+        patients = [row[0] for row in cur.fetchall()]
+        
+        cur.close()
+        return patients
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+    finally:
+        if conn:
+            conn.close()
