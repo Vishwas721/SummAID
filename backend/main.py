@@ -9,6 +9,7 @@ from dotenv import load_dotenv
 from database import get_db_connection
 import requests
 from pydantic import BaseModel, Field
+from routers.patient_router import router as patient_router
 
 # Configure logging
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -49,6 +50,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Include sub-routers
+app.include_router(patient_router)
 
 @app.get("/")
 async def health_check():
