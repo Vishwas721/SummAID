@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { useAuth } from './auth/AuthContext'
 import axios from 'axios'
 import { PatientSidebar } from './components/PatientSidebar'
 import './App.css'
@@ -7,6 +8,7 @@ import { PatientChartView } from './components/PatientChartView'
 function App() {
   const [selectedPatientId, setSelectedPatientId] = useState(null)
   const [apiStatus, setApiStatus] = useState('checking...')
+  const { user, logout } = useAuth()
 
   useEffect(() => {
     // Check API health when component mounts
@@ -41,11 +43,15 @@ function App() {
       {/* Main Content Area */}
       <div className="flex-1 flex flex-col overflow-hidden">
         {/* Header */}
-        <div className="bg-card border-b border-border px-6 py-4">
-          <h1 className="text-2xl font-bold text-card-foreground">SummAID</h1>
-          <p className="text-sm text-muted-foreground">
-            Clinical Intelligence Platform - API Status: {apiStatus}
-          </p>
+        <div className="bg-card border-b border-border px-6 py-4 flex items-center justify-between">
+          <div>
+            <h1 className="text-2xl font-bold text-card-foreground">SummAID</h1>
+            <p className="text-sm text-muted-foreground">Clinical Intelligence Platform - API Status: {apiStatus}</p>
+          </div>
+          <div className="flex items-center gap-3">
+            <span className="text-xs text-muted-foreground">user: {user?.username || '—'}</span>
+            <button onClick={logout} className="text-xs px-2 py-1 rounded border border-border bg-muted hover:bg-muted/70">Logout</button>
+          </div>
         </div>
 
         {/* Content */}
