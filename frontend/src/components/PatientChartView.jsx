@@ -5,7 +5,8 @@ import { cn } from '../lib/utils'
 
 export function PatientChartView({ patientId }) {
   const [summary, setSummary] = useState('')
-  const [sources, setSources] = useState([])
+  const [citations, setCitations] = useState([])
+  const [expandedCitationIds, setExpandedCitationIds] = useState(new Set())
   const [generating, setGenerating] = useState(false)
   const [error, setError] = useState(null)
 
@@ -14,18 +15,17 @@ export function PatientChartView({ patientId }) {
     setGenerating(true)
     setError(null)
     setSummary('')
-    setSources([])
+  setCitations([])
     try {
       const url = `${import.meta.env.VITE_API_URL}/summarize/${encodeURIComponent(patientId)}`
       const response = await axios.post(url, {
-        // Phase 1: send defaults; future: allow keyword input
         keywords: null,
         max_chunks: 12,
         max_context_chars: 12000
       })
       const data = response.data
-      setSummary(data.summary || '(No summary returned)')
-      setSources(Array.isArray(data.sources) ? data.sources : [])
+  setSummary(data.summary_text || '(No summary returned)')
+  setCitations(Array.isArray(data.citations) ? data.citations : [])
     } catch (e) {
       console.error('Generate summary error', e)
       setError(e.response?.data?.detail || e.message || 'Unknown error')
@@ -76,18 +76,33 @@ export function PatientChartView({ patientId }) {
               ) : (
                 <div className="text-muted-foreground text-sm italic">No summary yet. Click Generate Summary.</div>
               )}
-              {sources.length > 0 && (
+              {citations.length > 0 && (
                 <div className="mt-2">
-                  <h3 className="text-xs font-semibold text-card-foreground mb-1">Sources ({sources.length})</h3>
-                  <ul className="space-y-1 max-h-48 overflow-auto pr-1">
-                    {sources.map((s, idx) => {
-                      const meta = s.metadata || {}
-                      const page = meta.page ?? meta.page_number ?? '—'
-                      const chunkIndex = meta.chunk_index ?? '—'
+                  <h3 className="text-xs font-semibold text-card-foreground mb-1">Citations ({citations.length})</h3>
+                  <ul className="space-y-1 max-h-56 overflow-auto pr-1">
+                    {citations.map((c, idx) => {
+                      const meta = c.source_metadata || {}
+                      const id = c.source_chunk_id ?? idx
+                      const isExpanded = expandedCitationIds.has(id)
+                      const toggle = () => {
+                        setExpandedCitationIds(prev => {
+                          const next = new Set(prev)
+                          if (next.has(id)) next.delete(id); else next.add(id)
+                          return next
+                        })
+                      }
                       return (
-                        <li key={idx} className="text-[11px] leading-snug bg-muted/30 border border-border rounded px-2 py-1 flex flex-col">
-                          <span className="font-mono">{s.filepath || '(filepath missing)'} </span>
-                          <span className="text-muted-foreground">page: {page} | chunk: {chunkIndex}</span>
+                        <li key={id} className="text-[11px] leading-snug bg-muted/30 border border-border rounded px-2 py-1">
+                          <div className="flex justify-between items-center gap-2">
+                            <span className="font-mono">chunk #{id}</span>
+                            <span className="text-muted-foreground">p{meta.page ?? meta.page_number ?? '—'} · ch{meta.chunk_index ?? '—'}</span>
+                            <button onClick={toggle} className="text-primary text-[10px] px-1 py-0.5 border border-transparent hover:border-border rounded">
+                              {isExpanded ? 'collapse' : 'expand'}
+                            </button>
+                          </div>
+                          <div className="mt-0.5 text-muted-foreground/90 whitespace-pre-wrap">
+                            {isExpanded ? (c.source_full_text || c.source_text_preview) : c.source_text_preview}
+                          </div>
                         </li>
                       )
                     })}

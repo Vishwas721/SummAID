@@ -1,7 +1,8 @@
 import os
 import json
 import logging
-from typing import List, Optional
+import unicodedata
+from typing import List, Optional, Tuple
 from fastapi import FastAPI, HTTPException, Body, Path
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
@@ -149,37 +150,77 @@ def _generate_summary(context_chunks: List[str], patient_demo_id: str) -> str:
         raise HTTPException(status_code=500, detail=f"Empty summary response: {data}")
     return summary.strip()
 
+def _normalize_text(s: str) -> str:
+    """Normalize Unicode and fix common mojibake artifacts from PDF/OCR.
+    This is a light-touch pass to improve readability without altering meaning.
+    """
+    if not isinstance(s, str):
+        return s
+    # Unicode normalization
+    s = unicodedata.normalize('NFKC', s)
+    # Common mojibake replacements
+    replacements = {
+        'â€¦': '…',
+        'â€“': '–',
+        'â€”': '—',
+        'â€˜': '‘',
+        'â€™': '’',
+        'â€œ': '“',
+        'â€': '”',
+        'Â·': '·',
+        'Â®': '®',
+        'Â©': '©',
+        'Â°': '°',
+        'Â±': '±',
+        'Â': ' ',  # stray non-breaking artifact
+    }
+    for k, v in replacements.items():
+        s = s.replace(k, v)
+    # Normalize whitespace
+    s = s.replace('\r\n', '\n').replace('\r', '\n')
+    # Collapse overlong whitespace runs
+    s = '\n'.join(' '.join(line.split()) for line in s.split('\n'))
+    return s.strip()
+
 @app.post("/summarize/{patient_demo_id}")
 async def summarize_patient(
     patient_demo_id: str = Path(..., description="The patient_demo_id to summarize"),
     payload: SummarizeRequest = Body(default=SummarizeRequest())
 ):
-    """Skeleton summarization endpoint performing basic hybrid search + generation."""
+    """Summarization endpoint with Glass Box citations.
+
+    Returns a JSON object containing:
+    {
+      "summary_text": <model summary>,
+      "citations": [
+         {"source_chunk_id": <int>, "source_text_preview": <str>, "source_metadata": <JSON>},
+         ...
+      ]
+    }
+    """
     try:
         # 1. Build embedding for a generic summarization intent (could be enhanced with keywords)
         embed_basis = " ".join(payload.keywords) if payload.keywords else f"summary {patient_demo_id}"
         query_embedding = _embed_text(embed_basis)
         if len(query_embedding) != 768:
-            # Warn mismatch early
             raise HTTPException(status_code=500, detail=f"Embedding dimension {len(query_embedding)} != 768 schema expectation")
 
-        # Convert embedding to pgvector literal string
         embedding_literal = '[' + ','.join(f'{x:.6f}' for x in query_embedding) + ']'
 
         conn = None
-        similarity_chunks: List[tuple] = []  # Will store (chunk_text, metadata, filepath)
-        keyword_chunks: List[tuple] = []     # Will store (chunk_text, metadata, filepath)
+        similarity_chunks: List[Tuple[int, str, dict]] = []  # (chunk_id, chunk_text, metadata)
+        keyword_chunks: List[Tuple[int, str, dict]] = []     # (chunk_id, chunk_text, metadata)
         try:
             conn = get_db_connection()
             cur = conn.cursor()
 
-            # 2. Similarity search limited - NOW INCLUDING METADATA AND FILEPATH
+            # 2. Similarity search - include chunk_id + metadata
             cur.execute(
                 f"""
                 WITH q AS (SELECT %s::vector(768) AS qv)
-                SELECT pgp_sym_decrypt(c.chunk_text_encrypted, %s)::text AS chunk_text,
+                SELECT c.chunk_id,
+                       pgp_sym_decrypt(c.chunk_text_encrypted, %s)::text AS chunk_text,
                        c.source_metadata,
-                       r.report_filepath_pointer,
                        (c.report_vector <=> q.qv) AS distance
                 FROM report_chunks c
                 JOIN reports r ON r.report_id = c.report_id
@@ -191,9 +232,11 @@ async def summarize_patient(
                 (embedding_literal, ENCRYPTION_KEY, patient_demo_id, payload.max_chunks)
             )
             similarity_rows = cur.fetchall()
-            similarity_chunks = [(row[0], row[1], row[2]) for row in similarity_rows if row and row[0]]
+            for row in similarity_rows:
+                if row and row[1]:  # ensure chunk_text exists
+                    similarity_chunks.append((row[0], row[1], row[2]))
 
-            # 3. Keyword search (if any) - NOW INCLUDING METADATA AND FILEPATH
+            # 3. Keyword search (if any) - include chunk_id
             if payload.keywords:
                 patterns = [f"%{kw}%" for kw in payload.keywords]
                 ors = " OR ".join([f"pgp_sym_decrypt(c.chunk_text_encrypted, %s)::text ILIKE %s" for _ in patterns])
@@ -201,18 +244,19 @@ async def summarize_patient(
                 for p in patterns:
                     params.extend([ENCRYPTION_KEY, p])
                 sql = f"""
-                    SELECT DISTINCT pgp_sym_decrypt(c.chunk_text_encrypted, %s)::text AS chunk_text,
-                           c.source_metadata,
-                           r.report_filepath_pointer
+                    SELECT DISTINCT c.chunk_id,
+                           pgp_sym_decrypt(c.chunk_text_encrypted, %s)::text AS chunk_text,
+                           c.source_metadata
                     FROM report_chunks c
                     JOIN reports r ON r.report_id = c.report_id
                     WHERE r.patient_demo_id = %s AND ( {ors} )
-                """.replace('%s)::text ILIKE %s', '%s)::text ILIKE %s')  # keep placeholders stable
-                # Build final parameters: first decrypt key for DISTINCT select, patient id, then repeated pairs
+                """.replace('%s)::text ILIKE %s', '%s)::text ILIKE %s')
                 final_params = [ENCRYPTION_KEY, patient_demo_id] + params
                 cur.execute(sql, final_params)
                 keyword_rows = cur.fetchall()
-                keyword_chunks = [(row[0], row[1], row[2]) for row in keyword_rows if row and row[0]]
+                for row in keyword_rows:
+                    if row and row[1]:
+                        keyword_chunks.append((row[0], row[1], row[2]))
             cur.close()
         except HTTPException:
             raise
@@ -222,56 +266,50 @@ async def summarize_patient(
             if conn:
                 conn.close()
 
-        # 4. Merge & trim context - NOW PRESERVING CITATIONS
-        seen = set()
-        merged: List[tuple] = []  # List of (chunk_text, metadata, filepath)
-        for source_list in (keyword_chunks, similarity_chunks):  # prioritize keyword matches first
-            for chunk_tuple in source_list:
-                chunk_text = chunk_tuple[0]
-                key = chunk_text[:200]
-                if key in seen:
+        # 4. Merge (keyword priority) & trim by character budget
+        seen_text = set()
+        merged: List[Tuple[int, str, dict]] = []
+        for source_list in (keyword_chunks, similarity_chunks):
+            for chunk_id, chunk_text, metadata in source_list:
+                dedup_key = chunk_text[:200]
+                if dedup_key in seen_text:
                     continue
-                seen.add(key)
-                merged.append(chunk_tuple)
-        
-        # Limit by character budget
-        context_accum: List[tuple] = []  # List of (chunk_text, metadata, filepath)
+                seen_text.add(dedup_key)
+                merged.append((chunk_id, chunk_text, metadata))
+
+        context_accum: List[Tuple[int, str, dict]] = []
         total_chars = 0
-        for chunk_tuple in merged:
-            chunk_text = chunk_tuple[0]
+        for chunk_id, chunk_text, metadata in merged:
             if total_chars + len(chunk_text) > payload.max_context_chars:
                 break
-            context_accum.append(chunk_tuple)
+            context_accum.append((chunk_id, chunk_text, metadata))
             total_chars += len(chunk_text)
-        
+
         if not context_accum:
             raise HTTPException(status_code=404, detail=f"No chunks found for patient_demo_id={patient_demo_id}")
 
-        # 5. Generate summary - extract just text for generation
-        context_texts = [chunk_tuple[0] for chunk_tuple in context_accum]
-        summary_text = _generate_summary(context_texts, patient_demo_id)
+        # 5. Generate summary
+        summary_text = _generate_summary([t for _, t, _ in context_accum], patient_demo_id)
 
-        # 6. Build sources list for Glass Box transparency
-        sources = []
-        for chunk_tuple in context_accum:
-            try:
-                sources.append({
-                    "metadata": chunk_tuple[1] if len(chunk_tuple) > 1 else {},
-                    "filepath": chunk_tuple[2] if len(chunk_tuple) > 2 else None
-                })
-            except (IndexError, TypeError) as e:
-                # Log but don't fail if citation data is malformed
-                print(f"Warning: Could not extract citation for chunk: {e}")
-                sources.append({"metadata": {}, "filepath": None})
+        # 6. Build citations list
+        citations = []
+        PREVIEW_LEN = 160
+        for chunk_id, chunk_text, metadata in context_accum:
+            # Normalize full text and preview for readability
+            norm_full = _normalize_text(chunk_text)
+            preview = norm_full[:PREVIEW_LEN]
+            if len(norm_full) > PREVIEW_LEN:
+                preview += "…"
+            citations.append({
+                "source_chunk_id": chunk_id,
+                "source_text_preview": preview,
+                "source_full_text": norm_full,
+                "source_metadata": metadata or {}
+            })
 
         return {
-            "patient_demo_id": patient_demo_id,
-            "model": GEN_MODEL,
-            "embedding_model": EMBED_MODEL,
-            "chunks_used": len(context_accum),
-            "total_context_chars": total_chars,
-            "summary": summary_text,
-            "sources": sources  # GLASS BOX: Every statement must be citable
+            "summary_text": summary_text,
+            "citations": citations
         }
     except HTTPException:
         raise
