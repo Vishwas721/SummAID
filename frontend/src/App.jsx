@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import axios from 'axios'
 import { PatientSidebar } from './components/PatientSidebar'
 import './App.css'
+import { PatientChartView } from './components/PatientChartView'
 
 function App() {
   const [selectedPatientId, setSelectedPatientId] = useState(null)
@@ -50,19 +51,7 @@ function App() {
         {/* Content */}
         <div className="flex-1 overflow-auto p-6">
           {selectedPatientId ? (
-            <div className="max-w-4xl">
-              <div className="bg-card border border-border rounded-lg p-6">
-                <h2 className="text-xl font-semibold text-card-foreground mb-2">
-                  Patient Details
-                </h2>
-                <p className="text-muted-foreground mb-4">
-                  Selected Patient ID: <span className="font-mono text-primary">{selectedPatientId}</span>
-                </p>
-                <div className="text-sm text-muted-foreground">
-                  Summary and report viewer will be implemented in the next tasks.
-                </div>
-              </div>
-            </div>
+            <PatientChartView patientId={selectedPatientId} />
           ) : (
             <div className="flex items-center justify-center h-full">
               <div className="text-center text-muted-foreground">
