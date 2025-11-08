@@ -18,6 +18,8 @@ export function PatientChartView({ patientId }) {
   const [expandedCitationIds, setExpandedCitationIds] = useState(new Set())
   const [generating, setGenerating] = useState(false)
   const [error, setError] = useState(null)
+  const [activeCitationId, setActiveCitationId] = useState(null)
+  const [activeCitationText, setActiveCitationText] = useState('')
   
   // PDF state
   const [reports, setReports] = useState([])
@@ -60,7 +62,9 @@ export function PatientChartView({ patientId }) {
     setGenerating(true)
     setError(null)
     setSummary('')
-  setCitations([])
+    setCitations([])
+    setActiveCitationId(null)
+    setActiveCitationText('')
     try {
       const url = `${import.meta.env.VITE_API_URL}/summarize/${encodeURIComponent(patientId)}`
       const response = await axios.post(url, {
@@ -69,8 +73,8 @@ export function PatientChartView({ patientId }) {
         max_context_chars: 12000
       })
       const data = response.data
-  setSummary(data.summary_text || '(No summary returned)')
-  setCitations(Array.isArray(data.citations) ? data.citations : [])
+      setSummary(data.summary_text || '(No summary returned)')
+      setCitations(Array.isArray(data.citations) ? data.citations : [])
     } catch (e) {
       console.error('Generate summary error', e)
       setError(e.response?.data?.detail || e.message || 'Unknown error')
@@ -144,7 +148,20 @@ export function PatientChartView({ patientId }) {
                   onLoadError={onDocumentLoadError}
                   loading={<div className="text-xs text-muted-foreground">Loading PDF...</div>}
                 >
-                  <Page pageNumber={pageNumber} renderTextLayer={true} renderAnnotationLayer={true} />
+                  <Page 
+                    pageNumber={pageNumber} 
+                    renderTextLayer={true} 
+                    renderAnnotationLayer={true}
+                    customTextRenderer={({ str }) => {
+                      if (!activeCitationText) return str
+                      const lower = str.toLowerCase()
+                      const trimmed = lower.trim()
+                      if (trimmed.length > 2 && activeCitationText.includes(trimmed)) {
+                        return `<span style="background:rgba(255,230,0,0.6);padding:1px;border-radius:2px;">${str}</span>`
+                      }
+                      return str
+                    }}
+                  />
                 </Document>
                 {numPages && (
                   <div className="flex items-center gap-2 text-xs">
@@ -195,21 +212,38 @@ export function PatientChartView({ patientId }) {
                   Error: {error}
                 </div>
               )}
-              {summary ? (
-                <pre className="text-xs whitespace-pre-wrap leading-relaxed font-mono bg-muted/40 p-3 rounded-md border border-border">{summary}</pre>
-              ) : generating ? (
+              {/* Glass Box: clickable evidence list */}
+              {generating && (
                 <div className="text-muted-foreground text-sm italic">Generating summary…</div>
-              ) : (
+              )}
+              {!generating && summary && (
+                <div className="text-xs whitespace-pre-wrap leading-relaxed font-mono bg-muted/40 p-3 rounded-md border border-border">
+                  {summary}
+                </div>
+              )}
+              {!generating && !summary && citations.length === 0 && (
                 <div className="text-muted-foreground text-sm italic">No summary yet. Click Generate Summary.</div>
               )}
-              {citations.length > 0 && (
+              {!generating && citations.length > 0 && (
                 <div className="mt-2">
-                  <h3 className="text-xs font-semibold text-card-foreground mb-1">Citations ({citations.length})</h3>
+                  <h3 className="text-xs font-semibold text-card-foreground mb-1">Evidence ({citations.length}) — click to open source</h3>
                   <ul className="space-y-1 max-h-56 overflow-auto pr-1">
                     {citations.map((c, idx) => {
                       const meta = c.source_metadata || {}
                       const id = c.source_chunk_id ?? idx
                       const isExpanded = expandedCitationIds.has(id)
+                      const page = meta.page ?? meta.page_number ?? 1
+                      const reportId = c.report_id ?? null
+                      const goToSource = () => {
+                        if (reportId) {
+                          if (reportId !== selectedReportId) {
+                            setSelectedReportId(reportId)
+                          }
+                          setPageNumber(Math.max(1, parseInt(page, 10) || 1))
+                          setActiveCitationId(id)
+                          setActiveCitationText((c.source_full_text || c.source_text_preview || '').toLowerCase())
+                        }
+                      }
                       const toggle = () => {
                         setExpandedCitationIds(prev => {
                           const next = new Set(prev)
@@ -221,18 +255,26 @@ export function PatientChartView({ patientId }) {
                         <li key={id} className="text-[11px] leading-snug bg-muted/30 border border-border rounded px-2 py-1">
                           <div className="flex justify-between items-center gap-2">
                             <span className="font-mono">chunk #{id}</span>
-                            <span className="text-muted-foreground">p{meta.page ?? meta.page_number ?? '—'} · ch{meta.chunk_index ?? '—'}</span>
+                            <span className="text-muted-foreground">p{page} · ch{meta.chunk_index ?? '—'}</span>
+                            <button onClick={goToSource} className="text-primary text-[10px] px-1 py-0.5 border border-transparent hover:border-border rounded">
+                              view
+                            </button>
                             <button onClick={toggle} className="text-primary text-[10px] px-1 py-0.5 border border-transparent hover:border-border rounded">
                               {isExpanded ? 'collapse' : 'expand'}
                             </button>
                           </div>
-                          <div className="mt-0.5 text-muted-foreground/90 whitespace-pre-wrap">
+                          <button onClick={goToSource} className={cn("mt-0.5 text-left block w-full whitespace-pre-wrap rounded px-1 py-0.5", id===activeCitationId ? "bg-primary/20 text-primary-foreground" : "text-muted-foreground/90 hover:bg-muted/50") }>
                             {isExpanded ? (c.source_full_text || c.source_text_preview) : c.source_text_preview}
-                          </div>
+                          </button>
                         </li>
                       )
                     })}
                   </ul>
+                  {/* Debug: raw citations JSON */}
+                  <details className="mt-2">
+                    <summary className="text-[11px] text-muted-foreground cursor-pointer">debug: raw citations</summary>
+                    <pre className="text-[10px] whitespace-pre-wrap leading-relaxed font-mono bg-muted/40 p-2 rounded-md border border-border max-h-48 overflow-auto">{JSON.stringify(citations, null, 2)}</pre>
+                  </details>
                 </div>
               )}
             </div>

@@ -212,8 +212,9 @@ async def summarize_patient(
         embedding_literal = '[' + ','.join(f'{x:.6f}' for x in query_embedding) + ']'
 
         conn = None
-        similarity_chunks: List[Tuple[int, str, dict]] = []  # (chunk_id, chunk_text, metadata)
-        keyword_chunks: List[Tuple[int, str, dict]] = []     # (chunk_id, chunk_text, metadata)
+        # (chunk_id, report_id, chunk_text, metadata)
+        similarity_chunks: List[Tuple[int, int, str, dict]] = []
+        keyword_chunks: List[Tuple[int, int, str, dict]] = []
         try:
             conn = get_db_connection()
             cur = conn.cursor()
@@ -223,6 +224,7 @@ async def summarize_patient(
                 f"""
                 WITH q AS (SELECT %s::vector(768) AS qv)
                 SELECT c.chunk_id,
+                       c.report_id,
                        pgp_sym_decrypt(c.chunk_text_encrypted, %s)::text AS chunk_text,
                        c.source_metadata,
                        (c.report_vector <=> q.qv) AS distance
@@ -237,8 +239,9 @@ async def summarize_patient(
             )
             similarity_rows = cur.fetchall()
             for row in similarity_rows:
-                if row and row[1]:  # ensure chunk_text exists
-                    similarity_chunks.append((row[0], row[1], row[2]))
+                # row: (chunk_id, report_id, chunk_text, metadata, distance)
+                if row and row[2]:  # ensure chunk_text exists
+                    similarity_chunks.append((row[0], row[1], row[2], row[3]))
 
             # 3. Keyword search (if any) - include chunk_id
             if payload.keywords:
@@ -249,6 +252,7 @@ async def summarize_patient(
                     params.extend([ENCRYPTION_KEY, p])
                 sql = f"""
                     SELECT DISTINCT c.chunk_id,
+                           c.report_id,
                            pgp_sym_decrypt(c.chunk_text_encrypted, %s)::text AS chunk_text,
                            c.source_metadata
                     FROM report_chunks c
@@ -259,8 +263,9 @@ async def summarize_patient(
                 cur.execute(sql, final_params)
                 keyword_rows = cur.fetchall()
                 for row in keyword_rows:
-                    if row and row[1]:
-                        keyword_chunks.append((row[0], row[1], row[2]))
+                    # row: (chunk_id, report_id, chunk_text, metadata)
+                    if row and row[2]:
+                        keyword_chunks.append((row[0], row[1], row[2], row[3]))
             cur.close()
         except HTTPException:
             raise
@@ -272,33 +277,33 @@ async def summarize_patient(
 
         # 4. Merge (keyword priority) & trim by character budget
         seen_text = set()
-        merged: List[Tuple[int, str, dict]] = []
+        merged: List[Tuple[int, int, str, dict]] = []
         for source_list in (keyword_chunks, similarity_chunks):
-            for chunk_id, chunk_text, metadata in source_list:
+            for chunk_id, report_id, chunk_text, metadata in source_list:
                 dedup_key = chunk_text[:200]
                 if dedup_key in seen_text:
                     continue
                 seen_text.add(dedup_key)
-                merged.append((chunk_id, chunk_text, metadata))
+                merged.append((chunk_id, report_id, chunk_text, metadata))
 
-        context_accum: List[Tuple[int, str, dict]] = []
+        context_accum: List[Tuple[int, int, str, dict]] = []
         total_chars = 0
-        for chunk_id, chunk_text, metadata in merged:
+        for chunk_id, report_id, chunk_text, metadata in merged:
             if total_chars + len(chunk_text) > payload.max_context_chars:
                 break
-            context_accum.append((chunk_id, chunk_text, metadata))
+            context_accum.append((chunk_id, report_id, chunk_text, metadata))
             total_chars += len(chunk_text)
 
         if not context_accum:
             raise HTTPException(status_code=404, detail=f"No chunks found for patient_demo_id={patient_demo_id}")
 
         # 5. Generate summary
-        summary_text = _generate_summary([t for _, t, _ in context_accum], patient_demo_id)
+        summary_text = _generate_summary([t for _, _, t, _ in context_accum], patient_demo_id)
 
         # 6. Build citations list
         citations = []
         PREVIEW_LEN = 160
-        for chunk_id, chunk_text, metadata in context_accum:
+        for chunk_id, report_id, chunk_text, metadata in context_accum:
             # Normalize full text and preview for readability
             norm_full = _normalize_text(chunk_text)
             preview = norm_full[:PREVIEW_LEN]
@@ -306,6 +311,7 @@ async def summarize_patient(
                 preview += "…"
             citations.append({
                 "source_chunk_id": chunk_id,
+                "report_id": report_id,
                 "source_text_preview": preview,
                 "source_full_text": norm_full,
                 "source_metadata": metadata or {}
