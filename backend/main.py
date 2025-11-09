@@ -197,164 +197,37 @@ def _normalize_text(s: str) -> str:
     s = '\n'.join(' '.join(line.split()) for line in s.split('\n'))
     return s.strip()
 
-@app.post("/summarize/{patient_demo_id}")
+@app.post("/summarize/{patient_id}")
 async def summarize_patient(
-    patient_demo_id: str = Path(..., description="The patient_demo_id to summarize"),
-    payload: SummarizeRequest = Body(default=SummarizeRequest())
-):
-    """Summarization endpoint with Glass Box citations.
-
-    Returns a JSON object containing:
-    {
-      "summary_text": <model summary>,
-      "citations": [
-         {"source_chunk_id": <int>, "source_text_preview": <str>, "source_metadata": <JSON>},
-         ...
-      ]
-    }
-    """
-    try:
-        # 1. Build embedding for a generic summarization intent (could be enhanced with keywords)
-        embed_basis = " ".join(payload.keywords) if payload.keywords else f"summary {patient_demo_id}"
-        query_embedding = _embed_text(embed_basis)
-        if len(query_embedding) != 768:
-            raise HTTPException(status_code=500, detail=f"Embedding dimension {len(query_embedding)} != 768 schema expectation")
-
-        embedding_literal = '[' + ','.join(f'{x:.6f}' for x in query_embedding) + ']'
-
-        conn = None
-        # (chunk_id, report_id, chunk_text, metadata)
-        similarity_chunks: List[Tuple[int, int, str, dict]] = []
-        keyword_chunks: List[Tuple[int, int, str, dict]] = []
-        try:
-            conn = get_db_connection()
-            cur = conn.cursor()
-
-            # 2. Similarity search - include chunk_id + metadata
-            cur.execute(
-                f"""
-                WITH q AS (SELECT %s::vector(768) AS qv)
-                SELECT c.chunk_id,
-                       c.report_id,
-                       pgp_sym_decrypt(c.chunk_text_encrypted, %s)::text AS chunk_text,
-                       c.source_metadata,
-                       (c.report_vector <=> q.qv) AS distance
-                FROM report_chunks c
-                JOIN reports r ON r.report_id = c.report_id
-                JOIN patients p ON p.patient_id = r.patient_id
-                JOIN q ON TRUE
-                WHERE p.patient_demo_id = %s
-                ORDER BY c.report_vector <=> q.qv
-                LIMIT %s
-                """,
-                (embedding_literal, ENCRYPTION_KEY, patient_demo_id, payload.max_chunks)
-            )
-            similarity_rows = cur.fetchall()
-            for row in similarity_rows:
-                # row: (chunk_id, report_id, chunk_text, metadata, distance)
-                if row and row[2]:  # ensure chunk_text exists
-                    similarity_chunks.append((row[0], row[1], row[2], row[3]))
-
-            # 3. Keyword search (if any) - include chunk_id
-            if payload.keywords:
-                patterns = [f"%{kw}%" for kw in payload.keywords]
-                ors = " OR ".join([f"pgp_sym_decrypt(c.chunk_text_encrypted, %s)::text ILIKE %s" for _ in patterns])
-                params: List[str] = []
-                for p in patterns:
-                    params.extend([ENCRYPTION_KEY, p])
-                sql = f"""
-                    SELECT DISTINCT c.chunk_id,
-                           c.report_id,
-                           pgp_sym_decrypt(c.chunk_text_encrypted, %s)::text AS chunk_text,
-                           c.source_metadata
-                    FROM report_chunks c
-                    JOIN reports r ON r.report_id = c.report_id
-                    JOIN patients p ON p.patient_id = r.patient_id
-                    WHERE p.patient_demo_id = %s AND ( {ors} )
-                """.replace('%s)::text ILIKE %s', '%s)::text ILIKE %s')
-                final_params = [ENCRYPTION_KEY, patient_demo_id] + params
-                cur.execute(sql, final_params)
-                keyword_rows = cur.fetchall()
-                for row in keyword_rows:
-                    # row: (chunk_id, report_id, chunk_text, metadata)
-                    if row and row[2]:
-                        keyword_chunks.append((row[0], row[1], row[2], row[3]))
-            cur.close()
-        except HTTPException:
-            raise
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Database hybrid search error: {e}")
-        finally:
-            if conn:
-                conn.close()
-
-        # 4. Merge (keyword priority) & trim by character budget
-        seen_text = set()
-        merged: List[Tuple[int, int, str, dict]] = []
-        for source_list in (keyword_chunks, similarity_chunks):
-            for chunk_id, report_id, chunk_text, metadata in source_list:
-                dedup_key = chunk_text[:200]
-                if dedup_key in seen_text:
-                    continue
-                seen_text.add(dedup_key)
-                merged.append((chunk_id, report_id, chunk_text, metadata))
-
-        context_accum: List[Tuple[int, int, str, dict]] = []
-        total_chars = 0
-        for chunk_id, report_id, chunk_text, metadata in merged:
-            if total_chars + len(chunk_text) > payload.max_context_chars:
-                break
-            context_accum.append((chunk_id, report_id, chunk_text, metadata))
-            total_chars += len(chunk_text)
-
-        if not context_accum:
-            raise HTTPException(status_code=404, detail=f"No chunks found for patient_demo_id={patient_demo_id}")
-
-        # 5. Generate summary
-        summary_text = _generate_summary([t for _, _, t, _ in context_accum], patient_demo_id)
-
-        # 6. Build citations list
-        citations = []
-        PREVIEW_LEN = 160
-        for chunk_id, report_id, chunk_text, metadata in context_accum:
-            # Normalize full text and preview for readability
-            norm_full = _normalize_text(chunk_text)
-            preview = norm_full[:PREVIEW_LEN]
-            if len(norm_full) > PREVIEW_LEN:
-                preview += "…"
-            citations.append({
-                "source_chunk_id": chunk_id,
-                "report_id": report_id,
-                "source_text_preview": preview,
-                "source_full_text": norm_full,
-                "source_metadata": metadata or {}
-            })
-
-        return {
-            "summary_text": summary_text,
-            "citations": citations
-        }
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.exception(f"Summarization error for patient {patient_demo_id}")
-        raise HTTPException(status_code=500, detail=f"Summarization error: {str(e)}")
-
-@app.post("/summarize/by-id/{patient_id}")
-async def summarize_patient_by_id(
     patient_id: int = Path(..., description="The numeric patient_id to summarize"),
     payload: SummarizeRequest = Body(default=SummarizeRequest())
 ):
-    """Summarize using patient_id instead of patient_demo_id (new canonical endpoint)."""
+    """Summarize using patient_id (canonical endpoint) across all of the patient's reports.
+
+    Steps:
+    - Resolve patient's display name (for labeling/prompt only)
+    - Find all report_ids for this patient
+    - Hybrid search (vector + optional keywords) only within those report_ids
+    - Decrypt best chunks and generate summary via Ollama
+    - Return summary + citations (unchanged shape)
+    """
     try:
-        # 1. Resolve demo_id & display name for labeling
+        # 1. Resolve display label & fetch report_ids
         conn = get_db_connection(); cur = conn.cursor()
-        cur.execute("SELECT patient_demo_id, patient_display_name FROM patients WHERE patient_id=%s", (patient_id,))
-        row = cur.fetchone(); cur.close(); conn.close()
-        if not row:
+        cur.execute("SELECT patient_display_name, patient_demo_id FROM patients WHERE patient_id=%s", (patient_id,))
+        prow = cur.fetchone()
+        if not prow:
+            cur.close(); conn.close()
             raise HTTPException(status_code=404, detail=f"Patient {patient_id} not found")
-        patient_demo_id, display_name = row
+        display_name, patient_demo_id = prow[0], prow[1]
         label = display_name or patient_demo_id or str(patient_id)
+
+        cur.execute("SELECT report_id FROM reports WHERE patient_id=%s ORDER BY report_id", (patient_id,))
+        report_rows = cur.fetchall()
+        report_ids = [r[0] for r in report_rows]
+        if not report_ids:
+            cur.close(); conn.close()
+            raise HTTPException(status_code=404, detail=f"No reports found for patient_id={patient_id}")
 
         # 2. Build embedding basis
         embed_basis = " ".join(payload.keywords) if payload.keywords else f"summary {label}"
@@ -363,27 +236,26 @@ async def summarize_patient_by_id(
             raise HTTPException(status_code=500, detail=f"Embedding dimension {len(query_embedding)} != 768 schema expectation")
         embedding_literal = '[' + ','.join(f'{x:.6f}' for x in query_embedding) + ']'
 
-        # 3. Retrieval by patient_id
+        # 3. Retrieval limited to this patient's report_ids
         similarity_chunks: List[Tuple[int, int, str, dict]] = []
         keyword_chunks: List[Tuple[int, int, str, dict]] = []
-        conn = get_db_connection(); cur = conn.cursor()
-        cur.execute(
-            f"""
+        # reuse existing connection/cur
+        placeholders = ','.join(['%s'] * len(report_ids))
+        similarity_sql = f"""
             WITH q AS (SELECT %s::vector(768) AS qv)
             SELECT c.chunk_id,
                    c.report_id,
                    pgp_sym_decrypt(c.chunk_text_encrypted, %s)::text AS chunk_text,
                    c.source_metadata,
                    (c.report_vector <=> q.qv) AS distance
-            FROM report_chunks c
-            JOIN reports r ON r.report_id = c.report_id
-            JOIN patients p ON p.patient_id = r.patient_id
-            JOIN q ON TRUE
-            WHERE p.patient_id = %s
+            FROM report_chunks c, q
+            WHERE c.report_id IN ({placeholders})
             ORDER BY c.report_vector <=> q.qv
             LIMIT %s
-            """,
-            (embedding_literal, ENCRYPTION_KEY, patient_id, payload.max_chunks)
+        """
+        cur.execute(
+            similarity_sql,
+            (embedding_literal, ENCRYPTION_KEY, *report_ids, payload.max_chunks)
         )
         for row in cur.fetchall():
             if row and row[2]:
@@ -394,18 +266,16 @@ async def summarize_patient_by_id(
             params: List[str] = []
             for ptn in patterns:
                 params.extend([ENCRYPTION_KEY, ptn])
-            sql = f"""
+            kw_sql = f"""
                 SELECT DISTINCT c.chunk_id,
                        c.report_id,
                        pgp_sym_decrypt(c.chunk_text_encrypted, %s)::text AS chunk_text,
                        c.source_metadata
                 FROM report_chunks c
-                JOIN reports r ON r.report_id = c.report_id
-                JOIN patients p ON p.patient_id = r.patient_id
-                WHERE p.patient_id = %s AND ( {ors} )
+                WHERE c.report_id IN ({placeholders}) AND ( {ors} )
             """.replace('%s)::text ILIKE %s', '%s)::text ILIKE %s')
-            final_params = [ENCRYPTION_KEY, patient_id] + params
-            cur.execute(sql, final_params)
+            final_params = [ENCRYPTION_KEY, *report_ids] + params
+            cur.execute(kw_sql, final_params)
             for row in cur.fetchall():
                 if row and row[2]:
                     keyword_chunks.append((row[0], row[1], row[2], row[3]))

@@ -66,7 +66,7 @@ export function PatientChartView({ patientId }) {
     setActiveCitationId(null)
     setActiveCitationText('')
     try {
-  const url = `${import.meta.env.VITE_API_URL}/summarize/by-id/${encodeURIComponent(patientId)}`
+      const url = `${import.meta.env.VITE_API_URL}/summarize/${encodeURIComponent(patientId)}`
       const response = await axios.post(url, {
         keywords: null,
         max_chunks: 12,
