@@ -28,7 +28,9 @@ export function AuthProvider({ children }) {
     setUser({ username })
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify({ loggedIn: true, user: { username } }))
-    } catch {}
+    } catch (err) {
+      console.error('localStorage setItem failed', err)
+    }
   }
 
   const logout = () => {
@@ -36,7 +38,9 @@ export function AuthProvider({ children }) {
     setUser(null)
     try {
       localStorage.removeItem(STORAGE_KEY)
-    } catch {}
+    } catch (err) {
+      console.error('localStorage removeItem failed', err)
+    }
   }
 
   const value = useMemo(() => ({ isAuthenticated, user, login, logout }), [isAuthenticated, user])
@@ -44,6 +48,7 @@ export function AuthProvider({ children }) {
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function useAuth() {
   const ctx = useContext(AuthContext)
   if (!ctx) throw new Error('useAuth must be used within an AuthProvider')

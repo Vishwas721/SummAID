@@ -104,7 +104,6 @@ export function PatientChartView({ patientId }) {
     console.error('Page render error:', error)
   }, [])
 
-  const selectedReport = reports.find(r => r.report_id === selectedReportId)
   const pdfUrl = selectedReportId 
     ? `${import.meta.env.VITE_API_URL}/report-file/${selectedReportId}`
     : null
@@ -168,7 +167,7 @@ export function PatientChartView({ patientId }) {
                       const lower = str.toLowerCase()
                       const trimmed = lower.trim()
                       if (trimmed.length > 2 && activeCitationText.includes(trimmed)) {
-                        return `<span style=\"background:rgba(255,230,0,0.6);padding:1px;border-radius:2px;\">${str}</span>`
+                        return `<span style="background:rgba(255,230,0,0.6);padding:1px;border-radius:2px;">${str}</span>`
                       }
                       return str
                     }}

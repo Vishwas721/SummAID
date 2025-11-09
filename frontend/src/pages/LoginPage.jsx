@@ -21,7 +21,7 @@ export default function LoginPage() {
     try {
       login(username || 'demo')
       navigate('/', { replace: true })
-    } catch (e) {
+    } catch {
       setError('Login failed')
     }
   }

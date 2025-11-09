@@ -15,7 +15,7 @@ export default function Dashboard() {
       try {
         const response = await axios.get(`${import.meta.env.VITE_API_URL}/`)
         setApiStatus(`connected - ${response.data.message || ''}`)
-      } catch (error) {
+      } catch {
         setApiStatus('error connecting')
       }
     }
