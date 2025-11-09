@@ -70,30 +70,32 @@ async def health_check():
 
 @app.get("/patients")
 async def get_patients():
-    """
-    Get list of all patients from the patients table.
-    Returns a JSON array of patient objects with demo_id and display_name.
+    """Return list of patients.
+
+    Task 17 specification: return objects with patient_id and patient_display_name.
     """
     conn = None
     try:
         conn = get_db_connection()
         cur = conn.cursor()
-        
         # Query for all patients, sorted by display name
         cur.execute("""
-            SELECT patient_demo_id, patient_display_name
-            FROM patients 
+            SELECT patient_id, patient_display_name
+            FROM patients
             ORDER BY patient_display_name
         """)
-        
-        # Return list of patient objects
-        patients = [{"patient_demo_id": row[0], "patient_display_name": row[1]} for row in cur.fetchall()]
-        
+        rows = cur.fetchall()
+        patients = [
+            {
+                "patient_id": r[0],
+                "patient_display_name": r[1]
+            }
+            for r in rows
+        ]
         cur.close()
         return patients
-        
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Database error: {e}")
     finally:
         if conn:
             conn.close()
@@ -132,12 +134,12 @@ def _embed_text(text: str) -> List[float]:
         return emb[0] if isinstance(emb, list) else emb
     raise HTTPException(status_code=500, detail=f"Embedding key missing in response: {data}")
 
-def _generate_summary(context_chunks: List[str], patient_demo_id: str) -> str:
+def _generate_summary(context_chunks: List[str], patient_label: str) -> str:
     """Call local Ollama generate endpoint to produce a summary from provided context."""
     # Basic prompt (Phase 1 skeleton) – can be refined later
     joined = "\n\n".join(context_chunks)
     prompt = (
-        f"You are a clinical summarization assistant. Produce a concise, factual summary for patient '{patient_demo_id}'.\n"
+    f"You are a clinical summarization assistant. Produce a concise, factual summary for patient '{patient_label}'.\n"
         f"Use only the information in the provided context.\n"
         f"Context:\n{joined}\n\nSummary:" )
     try:
@@ -337,3 +339,112 @@ async def summarize_patient(
     except Exception as e:
         logger.exception(f"Summarization error for patient {patient_demo_id}")
         raise HTTPException(status_code=500, detail=f"Summarization error: {str(e)}")
+
+@app.post("/summarize/by-id/{patient_id}")
+async def summarize_patient_by_id(
+    patient_id: int = Path(..., description="The numeric patient_id to summarize"),
+    payload: SummarizeRequest = Body(default=SummarizeRequest())
+):
+    """Summarize using patient_id instead of patient_demo_id (new canonical endpoint)."""
+    try:
+        # 1. Resolve demo_id & display name for labeling
+        conn = get_db_connection(); cur = conn.cursor()
+        cur.execute("SELECT patient_demo_id, patient_display_name FROM patients WHERE patient_id=%s", (patient_id,))
+        row = cur.fetchone(); cur.close(); conn.close()
+        if not row:
+            raise HTTPException(status_code=404, detail=f"Patient {patient_id} not found")
+        patient_demo_id, display_name = row
+        label = display_name or patient_demo_id or str(patient_id)
+
+        # 2. Build embedding basis
+        embed_basis = " ".join(payload.keywords) if payload.keywords else f"summary {label}"
+        query_embedding = _embed_text(embed_basis)
+        if len(query_embedding) != 768:
+            raise HTTPException(status_code=500, detail=f"Embedding dimension {len(query_embedding)} != 768 schema expectation")
+        embedding_literal = '[' + ','.join(f'{x:.6f}' for x in query_embedding) + ']'
+
+        # 3. Retrieval by patient_id
+        similarity_chunks: List[Tuple[int, int, str, dict]] = []
+        keyword_chunks: List[Tuple[int, int, str, dict]] = []
+        conn = get_db_connection(); cur = conn.cursor()
+        cur.execute(
+            f"""
+            WITH q AS (SELECT %s::vector(768) AS qv)
+            SELECT c.chunk_id,
+                   c.report_id,
+                   pgp_sym_decrypt(c.chunk_text_encrypted, %s)::text AS chunk_text,
+                   c.source_metadata,
+                   (c.report_vector <=> q.qv) AS distance
+            FROM report_chunks c
+            JOIN reports r ON r.report_id = c.report_id
+            JOIN patients p ON p.patient_id = r.patient_id
+            JOIN q ON TRUE
+            WHERE p.patient_id = %s
+            ORDER BY c.report_vector <=> q.qv
+            LIMIT %s
+            """,
+            (embedding_literal, ENCRYPTION_KEY, patient_id, payload.max_chunks)
+        )
+        for row in cur.fetchall():
+            if row and row[2]:
+                similarity_chunks.append((row[0], row[1], row[2], row[3]))
+        if payload.keywords:
+            patterns = [f"%{kw}%" for kw in payload.keywords]
+            ors = " OR ".join([f"pgp_sym_decrypt(c.chunk_text_encrypted, %s)::text ILIKE %s" for _ in patterns])
+            params: List[str] = []
+            for ptn in patterns:
+                params.extend([ENCRYPTION_KEY, ptn])
+            sql = f"""
+                SELECT DISTINCT c.chunk_id,
+                       c.report_id,
+                       pgp_sym_decrypt(c.chunk_text_encrypted, %s)::text AS chunk_text,
+                       c.source_metadata
+                FROM report_chunks c
+                JOIN reports r ON r.report_id = c.report_id
+                JOIN patients p ON p.patient_id = r.patient_id
+                WHERE p.patient_id = %s AND ( {ors} )
+            """.replace('%s)::text ILIKE %s', '%s)::text ILIKE %s')
+            final_params = [ENCRYPTION_KEY, patient_id] + params
+            cur.execute(sql, final_params)
+            for row in cur.fetchall():
+                if row and row[2]:
+                    keyword_chunks.append((row[0], row[1], row[2], row[3]))
+        cur.close(); conn.close()
+
+        # 4. Merge & trim
+        seen = set(); merged: List[Tuple[int,int,str,dict]] = []
+        for source_list in (keyword_chunks, similarity_chunks):
+            for cid,rid,txt,meta in source_list:
+                sig = txt[:200]
+                if sig in seen: continue
+                seen.add(sig); merged.append((cid,rid,txt,meta))
+        context_accum: List[Tuple[int,int,str,dict]] = []
+        total_chars = 0
+        for cid,rid,txt,meta in merged:
+            if total_chars + len(txt) > payload.max_context_chars: break
+            context_accum.append((cid,rid,txt,meta)); total_chars += len(txt)
+        if not context_accum:
+            raise HTTPException(status_code=404, detail=f"No chunks found for patient_id={patient_id}")
+
+        # 5. Generate summary using display label
+        summary_text = _generate_summary([t for _,_,t,_ in context_accum], label)
+
+        # 6. Citations
+        citations = []
+        PREVIEW_LEN = 160
+        for cid,rid,txt,meta in context_accum:
+            norm_full = _normalize_text(txt)
+            preview = norm_full[:PREVIEW_LEN] + ("…" if len(norm_full) > PREVIEW_LEN else "")
+            citations.append({
+                "source_chunk_id": cid,
+                "report_id": rid,
+                "source_text_preview": preview,
+                "source_full_text": norm_full,
+                "source_metadata": meta or {}
+            })
+        return {"summary_text": summary_text, "citations": citations}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"Summarization error for patient_id {patient_id}")
+        raise HTTPException(status_code=500, detail=f"Summarization error: {e}")

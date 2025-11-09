@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import axios from 'axios'
 import { Document, Page, pdfjs } from 'react-pdf'
 import 'react-pdf/dist/Page/AnnotationLayer.css'
@@ -32,11 +32,11 @@ export function PatientChartView({ patientId }) {
   // Fetch reports when patientId changes
   useEffect(() => {
     if (!patientId) return
-    const fetchReports = async () => {
+  const fetchReports = async () => {
       setLoadingReports(true)
       setPdfError(null)
       try {
-        const url = `${import.meta.env.VITE_API_URL}/reports/${encodeURIComponent(patientId)}`
+  const url = `${import.meta.env.VITE_API_URL}/reports/by-id/${encodeURIComponent(patientId)}`
         const response = await axios.get(url)
         const reportsList = response.data || []
         setReports(reportsList)
@@ -66,7 +66,7 @@ export function PatientChartView({ patientId }) {
     setActiveCitationId(null)
     setActiveCitationText('')
     try {
-      const url = `${import.meta.env.VITE_API_URL}/summarize/${encodeURIComponent(patientId)}`
+  const url = `${import.meta.env.VITE_API_URL}/summarize/by-id/${encodeURIComponent(patientId)}`
       const response = await axios.post(url, {
         keywords: null,
         max_chunks: 12,
@@ -93,6 +93,16 @@ export function PatientChartView({ patientId }) {
     console.error('PDF load error:', error)
     setPdfError('Failed to load PDF')
   }
+
+  // Some rerenders (switching page/report) can cancel an in-flight text layer render.
+  // Treat AbortException as benign to avoid noisy console errors.
+  const onPageRenderError = useCallback((error) => {
+    if (error?.name === 'AbortException') {
+      // harmless: a new render started before the previous finished
+      return
+    }
+    console.error('Page render error:', error)
+  }, [])
 
   const selectedReport = reports.find(r => r.report_id === selectedReportId)
   const pdfUrl = selectedReportId 
@@ -152,12 +162,13 @@ export function PatientChartView({ patientId }) {
                     pageNumber={pageNumber} 
                     renderTextLayer={true} 
                     renderAnnotationLayer={true}
+                    onRenderError={onPageRenderError}
                     customTextRenderer={({ str }) => {
                       if (!activeCitationText) return str
                       const lower = str.toLowerCase()
                       const trimmed = lower.trim()
                       if (trimmed.length > 2 && activeCitationText.includes(trimmed)) {
-                        return `<span style="background:rgba(255,230,0,0.6);padding:1px;border-radius:2px;">${str}</span>`
+                        return `<span style=\"background:rgba(255,230,0,0.6);padding:1px;border-radius:2px;\">${str}</span>`
                       }
                       return str
                     }}

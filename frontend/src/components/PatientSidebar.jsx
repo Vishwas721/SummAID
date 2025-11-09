@@ -70,8 +70,9 @@ export function PatientSidebar({ selectedPatientId, onSelectPatient }) {
         {!loading && !error && patients.length > 0 && (
           <ul className="py-2">
             {patients.map((patient) => {
-              const patientId = patient.patient_demo_id || patient
-              const displayName = patient.patient_display_name || patientId
+              // New /patients shape: { patient_id, patient_display_name }
+              const patientId = patient.patient_id
+              const displayName = patient.patient_display_name
               return (
                 <li key={patientId}>
                   <button
@@ -87,7 +88,7 @@ export function PatientSidebar({ selectedPatientId, onSelectPatient }) {
                       {displayName}
                     </div>
                     <div className="text-xs text-muted-foreground truncate">
-                      {patientId}
+                      ID: {patientId}
                     </div>
                   </button>
                 </li>
