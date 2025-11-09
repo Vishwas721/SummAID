@@ -36,7 +36,7 @@ export function PatientChartView({ patientId }) {
       setLoadingReports(true)
       setPdfError(null)
       try {
-  const url = `${import.meta.env.VITE_API_URL}/reports/by-id/${encodeURIComponent(patientId)}`
+        const url = `${import.meta.env.VITE_API_URL}/reports/${encodeURIComponent(patientId)}`
         const response = await axios.get(url)
         const reportsList = response.data || []
         setReports(reportsList)

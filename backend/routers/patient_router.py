@@ -6,50 +6,10 @@ import os
 
 router = APIRouter()
 
-@router.get("/reports/{patient_demo_id}")
-def get_reports_for_patient(patient_demo_id: str) -> List[Dict]:
+@router.get("/reports/{patient_id}")
+def get_reports_for_patient(patient_id: int) -> List[Dict]:
     """
-    Return all reports for the given patient_demo_id.
-    Each item includes the report_id, report_type, and the report file path pointer as 'filepath'.
-    """
-    conn = None
-    try:
-        conn = get_db_connection()
-        cur = conn.cursor()
-        cur.execute(
-            """
-            SELECT r.report_id, r.report_filepath_pointer, r.report_type
-            FROM reports r
-            JOIN patients p ON p.patient_id = r.patient_id
-            WHERE p.patient_demo_id = %s
-            ORDER BY r.report_id
-            """,
-            (patient_demo_id,)
-        )
-        rows = cur.fetchall()
-        cur.close()
-        # Add filename for display
-        results = []
-        for row in rows:
-            filepath = row[1]
-            filename = os.path.basename(filepath) if filepath else "unknown.pdf"
-            results.append({
-                "report_id": row[0],
-                "filepath": filepath,
-                "filename": filename,
-                "report_type": row[2] or "General"
-            })
-        return results
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
-    finally:
-        if conn:
-            conn.close()
-
-@router.get("/reports/by-id/{patient_id}")
-def get_reports_for_patient_id(patient_id: int) -> List[Dict]:
-    """
-    Return all reports for the given numeric patient_id.
+    Return all reports for the given patient_id.
     Each item includes the report_id, report_type, and the report file path pointer as 'filepath'.
     """
     conn = None
@@ -67,6 +27,7 @@ def get_reports_for_patient_id(patient_id: int) -> List[Dict]:
         )
         rows = cur.fetchall()
         cur.close()
+        # Add filename for display
         results = []
         for row in rows:
             filepath = row[1]
