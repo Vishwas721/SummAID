@@ -243,16 +243,22 @@ export function PatientChartView({ patientId }) {
                       const id = c.source_chunk_id ?? idx
                       const isExpanded = expandedCitationIds.has(id)
                       const page = meta.page ?? meta.page_number ?? 1
-                      const reportId = c.report_id ?? null
+                      // Prefer report_id inside source_metadata (backend enrichment) fallback to top-level
+                      const reportId = meta.report_id ?? c.report_id ?? null
+                      const reportObj = reportId ? reports.find(r => r.report_id === reportId) : null
+                      const reportLabel = reportObj ? reportObj.filename : (reportId ? `report ${reportId}` : 'unknown report')
                       const goToSource = () => {
-                        if (reportId) {
-                          if (reportId !== selectedReportId) {
-                            setSelectedReportId(reportId)
-                          }
-                          setPageNumber(Math.max(1, parseInt(page, 10) || 1))
-                          setActiveCitationId(id)
-                          setActiveCitationText((c.source_full_text || c.source_text_preview || '').toLowerCase())
+                        if (!reportId) {
+                          console.warn('Citation missing report_id', c)
+                          return
                         }
+                        if (reportId !== selectedReportId) {
+                          setSelectedReportId(reportId)
+                          // reset pageNumber later after PDF load? For now immediate.
+                        }
+                        setPageNumber(Math.max(1, parseInt(page, 10) || 1))
+                        setActiveCitationId(id)
+                        setActiveCitationText((c.source_full_text || c.source_text_preview || '').toLowerCase())
                       }
                       const toggle = () => {
                         setExpandedCitationIds(prev => {
@@ -266,6 +272,7 @@ export function PatientChartView({ patientId }) {
                           <div className="flex justify-between items-center gap-2">
                             <span className="font-mono">chunk #{id}</span>
                             <span className="text-muted-foreground">p{page} · ch{meta.chunk_index ?? '—'}</span>
+                            <span className="text-muted-foreground/70 truncate max-w-[90px]" title={reportLabel}>{reportLabel}</span>
                             <button onClick={goToSource} className="text-primary text-[10px] px-1 py-0.5 border border-transparent hover:border-border rounded">
                               view
                             </button>
@@ -276,6 +283,9 @@ export function PatientChartView({ patientId }) {
                           <button onClick={goToSource} className={cn("mt-0.5 text-left block w-full whitespace-pre-wrap rounded px-1 py-0.5", id===activeCitationId ? "bg-primary/20 text-primary-foreground" : "text-muted-foreground/90 hover:bg-muted/50") }>
                             {isExpanded ? (c.source_full_text || c.source_text_preview) : c.source_text_preview}
                           </button>
+                          {!reportObj && reportId && (
+                            <div className="mt-1 text-[10px] text-amber-600">Report not loaded in list</div>
+                          )}
                         </li>
                       )
                     })}

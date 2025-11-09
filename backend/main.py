@@ -305,12 +305,15 @@ async def summarize_patient(
         for cid,rid,txt,meta in context_accum:
             norm_full = _normalize_text(txt)
             preview = norm_full[:PREVIEW_LEN] + ("…" if len(norm_full) > PREVIEW_LEN else "")
+            # Ensure report_id is available inside source_metadata for frontend routing
+            enriched_meta = (meta or {}).copy()
+            enriched_meta.setdefault('report_id', rid)
             citations.append({
                 "source_chunk_id": cid,
                 "report_id": rid,
                 "source_text_preview": preview,
                 "source_full_text": norm_full,
-                "source_metadata": meta or {}
+                "source_metadata": enriched_meta
             })
         return {"summary_text": summary_text, "citations": citations}
     except HTTPException:
