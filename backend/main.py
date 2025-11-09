@@ -15,8 +15,17 @@ from routers.patient_router import router as patient_router
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# Load environment variables
-load_dotenv()
+# Load environment variables (prefer .env values even if process has existing vars)
+load_dotenv(override=True)
+
+# Shared helper to sanitize encryption key (strip surrounding quotes/whitespace)
+def _sanitize_key(raw: Optional[str]) -> Optional[str]:
+    if raw is None:
+        return None
+    key = raw.strip()
+    if len(key) >= 2 and ((key[0] == '"' and key[-1] == '"') or (key[0] == "'" and key[-1] == "'")):
+        key = key[1:-1]
+    return key
 
 # --- Configuration Loading & Validation ---
 DATABASE_URL = os.getenv("DATABASE_URL")
@@ -25,7 +34,7 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 # This .env-based encryption key management is STRICTLY for Phase 1 prototype only.
 # MUST be replaced with HashiCorp Vault HA Cluster using Transit Engine before ANY pilot
 # with real data or production deployment. See Project Constitution Phase 2 Production Blueprint.
-ENCRYPTION_KEY = os.getenv("ENCRYPTION_KEY")
+ENCRYPTION_KEY = _sanitize_key(os.getenv("ENCRYPTION_KEY"))
 
 # Default to Vite's default port if not specified
 FRONTEND_ORIGIN = os.getenv("FRONTEND_ORIGIN", "http://localhost:5173")
@@ -62,23 +71,23 @@ async def health_check():
 @app.get("/patients")
 async def get_patients():
     """
-    Get list of all unique patient demo IDs from the reports table.
-    Returns a JSON array of patient_demo_id strings.
+    Get list of all patients from the patients table.
+    Returns a JSON array of patient objects with demo_id and display_name.
     """
     conn = None
     try:
         conn = get_db_connection()
         cur = conn.cursor()
         
-        # Query for unique patient_demo_ids, sorted alphabetically
+        # Query for all patients, sorted by display name
         cur.execute("""
-            SELECT DISTINCT patient_demo_id 
-            FROM reports 
-            ORDER BY patient_demo_id
+            SELECT patient_demo_id, patient_display_name
+            FROM patients 
+            ORDER BY patient_display_name
         """)
         
-        # Extract just the patient_demo_id values into a list
-        patients = [row[0] for row in cur.fetchall()]
+        # Return list of patient objects
+        patients = [{"patient_demo_id": row[0], "patient_display_name": row[1]} for row in cur.fetchall()]
         
         cur.close()
         return patients
@@ -230,8 +239,9 @@ async def summarize_patient(
                        (c.report_vector <=> q.qv) AS distance
                 FROM report_chunks c
                 JOIN reports r ON r.report_id = c.report_id
+                JOIN patients p ON p.patient_id = r.patient_id
                 JOIN q ON TRUE
-                WHERE r.patient_demo_id = %s
+                WHERE p.patient_demo_id = %s
                 ORDER BY c.report_vector <=> q.qv
                 LIMIT %s
                 """,
@@ -257,7 +267,8 @@ async def summarize_patient(
                            c.source_metadata
                     FROM report_chunks c
                     JOIN reports r ON r.report_id = c.report_id
-                    WHERE r.patient_demo_id = %s AND ( {ors} )
+                    JOIN patients p ON p.patient_id = r.patient_id
+                    WHERE p.patient_demo_id = %s AND ( {ors} )
                 """.replace('%s)::text ILIKE %s', '%s)::text ILIKE %s')
                 final_params = [ENCRYPTION_KEY, patient_demo_id] + params
                 cur.execute(sql, final_params)

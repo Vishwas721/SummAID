@@ -10,7 +10,7 @@ router = APIRouter()
 def get_reports_for_patient(patient_demo_id: str) -> List[Dict]:
     """
     Return all reports for the given patient_demo_id.
-    Each item includes the report_id and the report file path pointer as 'filepath'.
+    Each item includes the report_id, report_type, and the report file path pointer as 'filepath'.
     """
     conn = None
     try:
@@ -18,10 +18,11 @@ def get_reports_for_patient(patient_demo_id: str) -> List[Dict]:
         cur = conn.cursor()
         cur.execute(
             """
-            SELECT report_id, report_filepath_pointer
-            FROM reports
-            WHERE patient_demo_id = %s
-            ORDER BY report_id
+            SELECT r.report_id, r.report_filepath_pointer, r.report_type
+            FROM reports r
+            JOIN patients p ON p.patient_id = r.patient_id
+            WHERE p.patient_demo_id = %s
+            ORDER BY r.report_id
             """,
             (patient_demo_id,)
         )
@@ -35,7 +36,8 @@ def get_reports_for_patient(patient_demo_id: str) -> List[Dict]:
             results.append({
                 "report_id": row[0],
                 "filepath": filepath,
-                "filename": filename
+                "filename": filename,
+                "report_type": row[2] or "General"
             })
         return results
     except Exception as e:

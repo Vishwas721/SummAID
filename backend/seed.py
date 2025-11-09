@@ -10,12 +10,22 @@ import io
 import requests
 from dotenv import load_dotenv
 
-# Load environment variables
-load_dotenv()
+# Load environment variables (override to ensure fresh read in reseed scenarios)
+load_dotenv(override=True)
+
+def _sanitize_key(raw: str) -> str:
+    if raw is None:
+        raise ValueError("ENCRYPTION_KEY missing in environment")
+    key = raw.strip()
+    if len(key) >= 2 and ((key[0] == '"' and key[-1] == '"') or (key[0] == "'" and key[-1] == "'")):
+        key = key[1:-1].strip()
+    if not key:
+        raise ValueError("ENCRYPTION_KEY empty after sanitization")
+    return key
 
 # Constants
 DB_URL = os.getenv("DATABASE_URL")
-ENCRYPTION_KEY = os.getenv("ENCRYPTION_KEY")
+ENCRYPTION_KEY = _sanitize_key(os.getenv("ENCRYPTION_KEY"))
 OLLAMA_EMBED_MODEL = "nomic-embed-text"
 PDF_DIRECTORY = "./demo_reports/"
 
@@ -138,6 +148,20 @@ def get_embedding(text: str) -> List[float]:
     else:
         raise Exception(f"Unexpected embed response format: {data.keys()}")
 
+def infer_report_type(filename: str) -> str:
+    """Infer report type from filename keywords."""
+    lower = filename.lower()
+    if 'mri' in lower or 'ct' in lower or 'xray' in lower or 'radiology' in lower or 'imaging' in lower:
+        return 'Radiology'
+    elif 'path' in lower or 'biopsy' in lower or 'histology' in lower:
+        return 'Pathology'
+    elif 'lab' in lower or 'blood' in lower or 'cbc' in lower:
+        return 'Laboratory'
+    elif 'discharge' in lower or 'summary' in lower:
+        return 'Clinical Summary'
+    else:
+        return 'General'
+
 def main():
     # Connect to database
     conn = get_db_connection()
@@ -145,56 +169,95 @@ def main():
     
     try:
         # Clear existing data
-        cur.execute("TRUNCATE reports, report_chunks CASCADE;")
+        cur.execute("TRUNCATE patients, reports, report_chunks CASCADE;")
         
-        # Process each PDF in the directory
-        for filename in os.listdir(PDF_DIRECTORY):
-            if not filename.lower().endswith('.pdf'):
-                continue
-                
-            file_path = os.path.join(PDF_DIRECTORY, filename)
-            print(f"Processing {filename}...")
+        # Map patients to their reports (filename -> patient assignment)
+        # This allows multiple PDFs to belong to the same demo patient
+        patient_report_mapping = {}
+        
+        # Scan all PDFs and build patient mapping
+        pdf_files = [f for f in os.listdir(PDF_DIRECTORY) if f.lower().endswith('.pdf')]
+        
+        # Strategy: group by base name before first underscore or assign unique patient per file
+        # For demo purposes, we'll create logical patient groupings:
+        # If files share a common prefix (before _), group them under same patient
+        for filename in pdf_files:
+            base = os.path.splitext(filename)[0]
+            # Extract patient identifier: use the part before first underscore or the whole name
+            parts = base.split('_')
+            if len(parts) > 1 and parts[0].lower() in ['patient', 'jane', 'john', 'demo']:
+                patient_key = parts[0].lower()  # e.g., "jane" from "jane_mri.pdf"
+            else:
+                patient_key = base  # Use full base as unique patient
             
-            # Extract text from PDF
-            pages_text = extract_text_from_pdf(file_path)
-            if not pages_text:
-                print(f"No text extracted from {filename}, skipping...")
-                continue
+            if patient_key not in patient_report_mapping:
+                patient_report_mapping[patient_key] = []
+            patient_report_mapping[patient_key].append(filename)
+        
+        # Create patients and process their reports
+        for patient_key, report_files in patient_report_mapping.items():
+            # Create patient record
+            patient_demo_id = f"patient_{patient_key}"
+            display_name = patient_key.replace('_', ' ').title()
             
-            # Combine all text for the full report
-            full_text = "\n\n".join(text for text, _ in pages_text)
-            
-            # Create report entry
-            patient_demo_id = f"patient_{os.path.splitext(filename)[0]}"
             cur.execute("""
-                INSERT INTO reports (patient_demo_id, report_filepath_pointer, report_text_encrypted)
-                VALUES (%s, %s, pgp_sym_encrypt(%s, %s))
-                RETURNING report_id
-            """, (patient_demo_id, file_path, full_text, ENCRYPTION_KEY))
+                INSERT INTO patients (patient_demo_id, patient_display_name)
+                VALUES (%s, %s)
+                RETURNING patient_id
+            """, (patient_demo_id, display_name))
             
-            report_id = cur.fetchone()[0]
+            patient_id = cur.fetchone()[0]
+            print(f"\nCreated patient: {display_name} (ID: {patient_id}, demo_id: {patient_demo_id})")
             
-            # Process chunks with accurate page tracking
-            chunks_with_metadata = chunk_text(pages_text)
-            for chunk, metadata in chunks_with_metadata:
-                # Get embedding
-                vector = get_embedding(chunk)
+            # Process each report for this patient
+            for filename in report_files:
+                file_path = os.path.join(PDF_DIRECTORY, filename)
+                print(f"  Processing report: {filename}...")
                 
-                # Insert chunk with accurate page metadata
+                # Extract text from PDF
+                pages_text = extract_text_from_pdf(file_path)
+                if not pages_text:
+                    print(f"    No text extracted from {filename}, skipping...")
+                    continue
+                
+                # Combine all text for the full report
+                full_text = "\n\n".join(text for text, _ in pages_text)
+                
+                # Infer report type
+                report_type = infer_report_type(filename)
+                
+                # Create report entry
                 cur.execute("""
-                    INSERT INTO report_chunks 
-                    (report_id, chunk_text_encrypted, report_vector, source_metadata)
-                    VALUES (%s, pgp_sym_encrypt(%s, %s), %s, %s)
-                """, (
-                    report_id,
-                    chunk,
-                    ENCRYPTION_KEY,
-                    vector,
-                    Json(metadata)
-                ))
+                    INSERT INTO reports (patient_id, report_filepath_pointer, report_type, report_text_encrypted)
+                    VALUES (%s, %s, %s, pgp_sym_encrypt(%s, %s))
+                    RETURNING report_id
+                """, (patient_id, file_path, report_type, full_text, ENCRYPTION_KEY))
+                
+                report_id = cur.fetchone()[0]
+                
+                # Process chunks with accurate page tracking
+                chunks_with_metadata = chunk_text(pages_text)
+                for chunk, metadata in chunks_with_metadata:
+                    # Get embedding
+                    vector = get_embedding(chunk)
+                    
+                    # Insert chunk with accurate page metadata
+                    cur.execute("""
+                        INSERT INTO report_chunks 
+                        (report_id, chunk_text_encrypted, report_vector, source_metadata)
+                        VALUES (%s, pgp_sym_encrypt(%s, %s), %s, %s)
+                    """, (
+                        report_id,
+                        chunk,
+                        ENCRYPTION_KEY,
+                        vector,
+                        Json(metadata)
+                    ))
+                
+                print(f"    Processed {len(chunks_with_metadata)} chunks for {filename} (type: {report_type})")
             
-            print(f"Processed {len(chunks_with_metadata)} chunks for {filename}")
             conn.commit()
+            print(f"  ✓ Committed {len(report_files)} report(s) for {display_name}")
             
     except Exception as e:
         conn.rollback()

@@ -69,23 +69,30 @@ export function PatientSidebar({ selectedPatientId, onSelectPatient }) {
 
         {!loading && !error && patients.length > 0 && (
           <ul className="py-2">
-            {patients.map((patientId) => (
-              <li key={patientId}>
-                <button
-                  onClick={() => onSelectPatient(patientId)}
-                  className={cn(
-                    "w-full text-left px-4 py-3 hover:bg-accent transition-colors",
-                    "border-l-4 border-transparent",
-                    "focus:outline-none focus:bg-accent",
-                    selectedPatientId === patientId && "bg-accent border-l-primary font-medium"
-                  )}
-                >
-                  <div className="text-sm text-card-foreground truncate">
-                    {patientId}
-                  </div>
-                </button>
-              </li>
-            ))}
+            {patients.map((patient) => {
+              const patientId = patient.patient_demo_id || patient
+              const displayName = patient.patient_display_name || patientId
+              return (
+                <li key={patientId}>
+                  <button
+                    onClick={() => onSelectPatient(patientId)}
+                    className={cn(
+                      "w-full text-left px-4 py-3 hover:bg-accent transition-colors",
+                      "border-l-4 border-transparent",
+                      "focus:outline-none focus:bg-accent",
+                      selectedPatientId === patientId && "bg-accent border-l-primary font-medium"
+                    )}
+                  >
+                    <div className="text-sm text-card-foreground font-medium truncate">
+                      {displayName}
+                    </div>
+                    <div className="text-xs text-muted-foreground truncate">
+                      {patientId}
+                    </div>
+                  </button>
+                </li>
+              )
+            })}
           </ul>
         )}
       </div>
