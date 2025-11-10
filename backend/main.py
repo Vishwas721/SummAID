@@ -107,7 +107,7 @@ GEN_MODEL = os.getenv("GEN_MODEL", "llama3:8b")  # generation model via Ollama
 
 class SummarizeRequest(BaseModel):
     keywords: Optional[List[str]] = Field(default=None, description="Optional keyword filters for hybrid search")
-    max_chunks: int = Field(default=12, ge=1, le=50, description="Maximum number of chunks from similarity search")
+    max_chunks: int = Field(default=20, ge=1, le=50, description="Maximum number of chunks from similarity search (increased to capture more context including critical findings)")
     max_context_chars: int = Field(default=12000, ge=500, le=60000, description="Max characters of context sent to model")
 
 def _embed_text(text: str) -> List[float]:
@@ -229,8 +229,13 @@ async def summarize_patient(
             cur.close(); conn.close()
             raise HTTPException(status_code=404, detail=f"No reports found for patient_id={patient_id}")
 
-        # 2. Build embedding basis
-        embed_basis = " ".join(payload.keywords) if payload.keywords else f"summary {label}"
+        # 2. Build embedding basis - use clinically-focused query for better retrieval
+        if payload.keywords:
+            embed_basis = " ".join(payload.keywords)
+        else:
+            # Clinically-focused query to boost FINDINGS/IMPRESSION sections
+            embed_basis = "clinical findings diagnosis impression key findings radiological findings pathology results"
+        
         query_embedding = _embed_text(embed_basis)
         if len(query_embedding) != 768:
             raise HTTPException(status_code=500, detail=f"Embedding dimension {len(query_embedding)} != 768 schema expectation")
@@ -239,8 +244,31 @@ async def summarize_patient(
         # 3. Retrieval limited to this patient's report_ids
         similarity_chunks: List[Tuple[int, int, str, dict]] = []
         keyword_chunks: List[Tuple[int, int, str, dict]] = []
+        structured_chunks: List[Tuple[int, int, str, dict]] = []  # Force-include FINDINGS/IMPRESSION
+        
         # reuse existing connection/cur
         placeholders = ','.join(['%s'] * len(report_ids))
+        
+        # 3a. First, force-include chunks with key structured sections (FINDINGS, IMPRESSION, CONCLUSION)
+        structured_sql = f"""
+            SELECT c.chunk_id,
+                   c.report_id,
+                   pgp_sym_decrypt(c.chunk_text_encrypted, %s)::text AS chunk_text,
+                   c.source_metadata
+            FROM report_chunks c
+            WHERE c.report_id IN ({placeholders})
+            AND (
+                pgp_sym_decrypt(c.chunk_text_encrypted, %s)::text ~* '\\n\\s*FINDINGS\\s*\\n'
+                OR pgp_sym_decrypt(c.chunk_text_encrypted, %s)::text ~* '\\n\\s*IMPRESSION\\s*\\n'
+                OR pgp_sym_decrypt(c.chunk_text_encrypted, %s)::text ~* '\\n\\s*CONCLUSION\\s*\\n'
+            )
+        """
+        cur.execute(structured_sql, [ENCRYPTION_KEY, *report_ids, ENCRYPTION_KEY, ENCRYPTION_KEY, ENCRYPTION_KEY])
+        for row in cur.fetchall():
+            if row and row[2]:
+                structured_chunks.append((row[0], row[1], row[2], row[3]))
+        
+        # 3b. Then get similarity-based chunks
         similarity_sql = f"""
             WITH q AS (SELECT %s::vector(768) AS qv)
             SELECT c.chunk_id,
@@ -281,13 +309,23 @@ async def summarize_patient(
                     keyword_chunks.append((row[0], row[1], row[2], row[3]))
         cur.close(); conn.close()
 
-        # 4. Merge & trim
+        # 4. Merge & trim - prioritize structured sections, then keywords, then similarity
         seen = set(); merged: List[Tuple[int,int,str,dict]] = []
-        for source_list in (keyword_chunks, similarity_chunks):
-            for cid,rid,txt,meta in source_list:
-                sig = txt[:200]
-                if sig in seen: continue
-                seen.add(sig); merged.append((cid,rid,txt,meta))
+        # Force structured sections first (FINDINGS/IMPRESSION always included)
+        for cid,rid,txt,meta in structured_chunks:
+            sig = txt[:200]
+            if sig in seen: continue
+            seen.add(sig); merged.append((cid,rid,txt,meta))
+        # Then keyword matches
+        for cid,rid,txt,meta in keyword_chunks:
+            sig = txt[:200]
+            if sig in seen: continue
+            seen.add(sig); merged.append((cid,rid,txt,meta))
+        # Then similarity-based chunks
+        for cid,rid,txt,meta in similarity_chunks:
+            sig = txt[:200]
+            if sig in seen: continue
+            seen.add(sig); merged.append((cid,rid,txt,meta))
         context_accum: List[Tuple[int,int,str,dict]] = []
         total_chars = 0
         for cid,rid,txt,meta in merged:

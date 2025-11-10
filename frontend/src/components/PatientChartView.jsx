@@ -69,8 +69,8 @@ export function PatientChartView({ patientId }) {
       const url = `${import.meta.env.VITE_API_URL}/summarize/${encodeURIComponent(patientId)}`
       const response = await axios.post(url, {
         keywords: null,
-        max_chunks: 12,
-        max_context_chars: 12000
+        max_chunks: 20,  // Increased to capture more context including FINDINGS/IMPRESSION sections
+        max_context_chars: 16000  // Increased to accommodate more chunks
       })
       const data = response.data
       setSummary(data.summary_text || '(No summary returned)')
