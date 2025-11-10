@@ -4,6 +4,7 @@ import { Document, Page, pdfjs } from 'react-pdf'
 import 'react-pdf/dist/Page/AnnotationLayer.css'
 import 'react-pdf/dist/Page/TextLayer.css'
 import { PanelGroup, Panel, PanelResizeHandle } from 'react-resizable-panels'
+import { FileText, Sparkles, AlertTriangle, ChevronLeft, ChevronRight, Loader2, Eye, EyeOff } from 'lucide-react'
 import { cn } from '../lib/utils'
 
 // Configure PDF.js worker - use local build from node_modules
@@ -28,6 +29,16 @@ export function PatientChartView({ patientId }) {
   const [pageNumber, setPageNumber] = useState(1)
   const [loadingReports, setLoadingReports] = useState(false)
   const [pdfError, setPdfError] = useState(null)
+
+  // Reset summary and citations when patient changes
+  useEffect(() => {
+    setSummary('')
+    setCitations([])
+    setExpandedCitationIds(new Set())
+    setActiveCitationId(null)
+    setActiveCitationText('')
+    setError(null)
+  }, [patientId])
 
   // Fetch reports when patientId changes
   useEffect(() => {
@@ -109,20 +120,31 @@ export function PatientChartView({ patientId }) {
     : null
 
   return (
-    <div className="h-full w-full">
+    <div className="h-full w-full bg-gradient-to-br from-slate-50 via-white to-blue-50 dark:from-slate-900 dark:via-slate-800 dark:to-blue-900">
       <PanelGroup direction="horizontal" className="h-full">
         {/* Left Panel: PDF Viewer */}
-        <Panel defaultSize={55} minSize={35} className={cn("bg-card border border-border rounded-md overflow-hidden flex flex-col")}>          
-          <div className="px-4 py-3 border-b border-border flex flex-col gap-2">
+        <Panel defaultSize={55} minSize={35} className={cn("bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg overflow-hidden flex flex-col shadow-2xl m-4 mr-2")}>          
+          <div className="px-5 py-4 border-b border-slate-200 dark:border-slate-700 bg-gradient-to-r from-slate-50 to-blue-50 dark:from-slate-800 dark:to-blue-900/30 flex flex-col gap-3">
             <div className="flex items-center justify-between">
-              <h2 className="text-sm font-semibold text-card-foreground">Report Viewer</h2>
-              <span className="text-xs text-muted-foreground font-mono">patient: {patientId}</span>
+              <div className="flex items-center gap-2">
+                <div className="p-1.5 bg-blue-500 rounded-md shadow-md">
+                  <FileText className="h-4 w-4 text-white" />
+                </div>
+                <h2 className="text-base font-bold text-slate-800 dark:text-slate-100">Medical Reports</h2>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-slate-500 dark:text-slate-400 font-medium">Patient ID:</span>
+                <span className="px-2 py-0.5 bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 text-xs font-bold rounded-full">{patientId}</span>
+              </div>
             </div>
             {/* Report list */}
             {loadingReports ? (
-              <div className="text-xs text-muted-foreground">Loading reports...</div>
+              <div className="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
+                <Loader2 className="h-3 w-3 animate-spin" />
+                <span>Loading reports...</span>
+              </div>
             ) : reports.length > 0 ? (
-              <div className="flex flex-wrap gap-1">
+              <div className="flex flex-wrap gap-2">
                 {reports.map(r => (
                   <button
                     key={r.report_id}
@@ -131,10 +153,10 @@ export function PatientChartView({ patientId }) {
                       setPageNumber(1)
                     }}
                     className={cn(
-                      "text-[10px] px-2 py-1 rounded border transition-colors",
+                      "text-xs px-3 py-1.5 rounded-lg border transition-all duration-200 font-medium",
                       r.report_id === selectedReportId
-                        ? "bg-primary text-primary-foreground border-primary"
-                        : "bg-muted text-muted-foreground border-border hover:bg-muted/80"
+                        ? "bg-gradient-to-r from-blue-500 to-purple-600 text-white border-blue-600 shadow-lg scale-105"
+                        : "bg-white dark:bg-slate-700 text-slate-700 dark:text-slate-300 border-slate-300 dark:border-slate-600 hover:bg-slate-50 dark:hover:bg-slate-600 hover:border-slate-400 hover:shadow-md"
                     )}
                   >
                     {r.filename}
@@ -142,111 +164,180 @@ export function PatientChartView({ patientId }) {
                 ))}
               </div>
             ) : (
-              <div className="text-xs text-muted-foreground">No reports found</div>
+              <div className="flex items-center gap-2 text-xs text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 px-3 py-2 rounded-lg border border-amber-200 dark:border-amber-800">
+                <AlertTriangle className="h-3 w-3" />
+                <span>No reports found for this patient</span>
+              </div>
             )}
           </div>
-          <div className="flex-1 overflow-auto p-4 flex flex-col items-center">
+          <div className="flex-1 overflow-auto p-6 flex flex-col items-center bg-slate-50 dark:bg-slate-900/50">
             {pdfError && (
-              <div className="text-xs text-red-500 mb-2">{pdfError}</div>
+              <div className="mb-4 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg text-xs text-red-700 dark:text-red-300 flex items-center gap-2">
+                <AlertTriangle className="h-4 w-4" />
+                {pdfError}
+              </div>
             )}
             {pdfUrl ? (
-              <div className="flex flex-col items-center gap-2">
-                <Document
-                  file={pdfUrl}
-                  onLoadSuccess={onDocumentLoadSuccess}
-                  onLoadError={onDocumentLoadError}
-                  loading={<div className="text-xs text-muted-foreground">Loading PDF...</div>}
-                >
-                  <Page 
-                    pageNumber={pageNumber} 
-                    renderTextLayer={true} 
-                    renderAnnotationLayer={true}
-                    onRenderError={onPageRenderError}
-                    customTextRenderer={({ str }) => {
-                      if (!activeCitationText) return str
-                      const lower = str.toLowerCase()
-                      const trimmed = lower.trim()
-                      if (trimmed.length > 2 && activeCitationText.includes(trimmed)) {
-                        return `<span style="background:rgba(255,230,0,0.6);padding:1px;border-radius:2px;">${str}</span>`
-                      }
-                      return str
-                    }}
-                  />
-                </Document>
+              <div className="flex flex-col items-center gap-4">
+                <div className="shadow-2xl rounded-lg overflow-hidden border-4 border-white dark:border-slate-700">
+                  <Document
+                    file={pdfUrl}
+                    onLoadSuccess={onDocumentLoadSuccess}
+                    onLoadError={onDocumentLoadError}
+                    loading={
+                      <div className="flex items-center gap-2 p-12 text-sm text-slate-500 dark:text-slate-400">
+                        <Loader2 className="h-5 w-5 animate-spin" />
+                        Loading PDF...
+                      </div>
+                    }
+                  >
+                    <Page 
+                      pageNumber={pageNumber} 
+                      renderTextLayer={true} 
+                      renderAnnotationLayer={true}
+                      onRenderError={onPageRenderError}
+                      customTextRenderer={({ str }) => {
+                        if (!activeCitationText) return str
+                        const lower = str.toLowerCase()
+                        const trimmed = lower.trim()
+                        if (trimmed.length > 2 && activeCitationText.includes(trimmed)) {
+                          return `<mark style="background:rgba(250, 204, 21, 0.4);padding:2px 4px;border-radius:2px;border-bottom:2px solid rgba(251, 191, 36, 0.8);color:inherit;font-weight:inherit;">${str}</mark>`
+                        }
+                        return str
+                      }}
+                    />
+                  </Document>
+                </div>
                 {numPages && (
-                  <div className="flex items-center gap-2 text-xs">
+                  <div className="flex items-center gap-3 bg-white dark:bg-slate-800 px-4 py-2 rounded-full shadow-lg border border-slate-200 dark:border-slate-700">
                     <button
                       onClick={() => setPageNumber(p => Math.max(1, p - 1))}
                       disabled={pageNumber <= 1}
-                      className="px-2 py-1 border border-border rounded disabled:opacity-40"
+                      className={cn(
+                        "p-2 rounded-lg transition-all",
+                        pageNumber <= 1
+                          ? "opacity-40 cursor-not-allowed text-slate-400"
+                          : "hover:bg-blue-50 dark:hover:bg-blue-900/30 text-blue-600 dark:text-blue-400 hover:scale-110"
+                      )}
                     >
-                      Prev
+                      <ChevronLeft className="h-4 w-4" />
                     </button>
-                    <span className="text-muted-foreground">
+                    <span className="text-sm font-semibold text-slate-700 dark:text-slate-300 min-w-[100px] text-center">
                       Page {pageNumber} of {numPages}
                     </span>
                     <button
                       onClick={() => setPageNumber(p => Math.min(numPages, p + 1))}
                       disabled={pageNumber >= numPages}
-                      className="px-2 py-1 border border-border rounded disabled:opacity-40"
+                      className={cn(
+                        "p-2 rounded-lg transition-all",
+                        pageNumber >= numPages
+                          ? "opacity-40 cursor-not-allowed text-slate-400"
+                          : "hover:bg-blue-50 dark:hover:bg-blue-900/30 text-blue-600 dark:text-blue-400 hover:scale-110"
+                      )}
                     >
-                      Next
+                      <ChevronRight className="h-4 w-4" />
                     </button>
                   </div>
                 )}
               </div>
             ) : (
-              <div className="text-center text-muted-foreground text-sm">
-                {loadingReports ? 'Loading reports...' : 'No report selected'}
+              <div className="flex flex-col items-center justify-center h-full text-center p-12">
+                <FileText className="h-16 w-16 text-slate-300 dark:text-slate-600 mb-4" />
+                <p className="text-sm text-slate-500 dark:text-slate-400">
+                  {loadingReports ? 'Loading reports...' : 'No report selected'}
+                </p>
               </div>
             )}
           </div>
         </Panel>
-        <PanelResizeHandle className="w-1 bg-border hover:bg-primary transition-colors cursor-col-resize" />
+        <PanelResizeHandle className="w-2 bg-gradient-to-r from-slate-200 via-blue-200 to-slate-200 dark:from-slate-700 dark:via-blue-800 dark:to-slate-700 hover:from-blue-400 hover:via-purple-400 hover:to-blue-400 transition-all duration-300 cursor-col-resize" />
         {/* Right Panel: Summary */}
         <Panel defaultSize={45} minSize={25} className={"flex flex-col gap-0"}>
-          <div className="bg-card border border-border rounded-md h-full flex flex-col">
-            <div className="px-4 py-3 border-b border-border flex items-center justify-between">
-              <h2 className="text-sm font-semibold text-card-foreground">Clinical Summary</h2>
+          <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg h-full flex flex-col shadow-2xl m-4 ml-2">
+            <div className="px-5 py-4 border-b border-slate-200 dark:border-slate-700 bg-gradient-to-r from-purple-50 to-blue-50 dark:from-purple-900/30 dark:to-blue-900/30 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div className="p-1.5 bg-gradient-to-br from-purple-500 to-blue-600 rounded-md shadow-md">
+                  <Sparkles className="h-4 w-4 text-white" />
+                </div>
+                <h2 className="text-base font-bold text-slate-800 dark:text-slate-100">AI Summary</h2>
+              </div>
               <button
                 onClick={handleGenerate}
                 disabled={generating}
-                className={cn("px-3 py-1.5 text-xs rounded-md border border-border bg-primary text-primary-foreground hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed")}
+                className={cn(
+                  "px-4 py-2 text-xs font-bold rounded-lg transition-all duration-200 shadow-md",
+                  "flex items-center gap-2",
+                  generating 
+                    ? "bg-slate-300 dark:bg-slate-600 text-slate-500 dark:text-slate-400 cursor-not-allowed"
+                    : "bg-gradient-to-r from-purple-500 to-blue-600 text-white hover:from-purple-600 hover:to-blue-700 hover:shadow-lg hover:scale-105"
+                )}
               >
-                {generating ? 'Generating…' : 'Generate Summary'}
+                {generating ? (
+                  <>
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                    Generating…
+                  </>
+                ) : (
+                  <>
+                    <Sparkles className="h-3 w-3" />
+                    Generate Summary
+                  </>
+                )}
               </button>
             </div>
-            <div className="flex-1 p-4 overflow-auto flex flex-col gap-4">
+            <div className="flex-1 p-5 overflow-auto flex flex-col gap-4 bg-slate-50 dark:bg-slate-900/50">
               {error && (
-                <div className="text-xs text-red-500 border border-red-500/40 bg-red-500/5 rounded-md p-2">
-                  Error: {error}
+                <div className="text-sm text-red-700 dark:text-red-300 border border-red-300 dark:border-red-800 bg-red-50 dark:bg-red-900/20 rounded-lg p-4 flex items-start gap-3 shadow-sm">
+                  <AlertTriangle className="h-5 w-5 flex-shrink-0 mt-0.5" />
+                  <div>
+                    <p className="font-semibold mb-1">Error Generating Summary</p>
+                    <p className="text-xs">{error}</p>
+                  </div>
                 </div>
               )}
               {/* Glass Box: clickable evidence list */}
               {generating && (
-                <div className="text-muted-foreground text-sm italic">Generating summary…</div>
+                <div className="flex items-center gap-3 text-sm text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20 p-4 rounded-lg border border-blue-200 dark:border-blue-800 animate-pulse">
+                  <Loader2 className="h-5 w-5 animate-spin" />
+                  <span className="font-medium">Generating AI summary...</span>
+                </div>
               )}
               {!generating && summary && (
-                <div className="text-xs whitespace-pre-wrap leading-relaxed font-mono bg-muted/40 p-3 rounded-md border border-border">
-                  {summary}
+                <div className="bg-white dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700 shadow-md overflow-hidden">
+                  <div className="bg-gradient-to-r from-blue-50 to-purple-50 dark:from-blue-900/20 dark:to-purple-900/20 px-4 py-2 border-b border-slate-200 dark:border-slate-700">
+                    <h3 className="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wide">Summary</h3>
+                  </div>
+                  <div className="p-4 text-sm whitespace-pre-wrap leading-relaxed text-slate-700 dark:text-slate-300 max-h-96 overflow-auto">
+                    {summary}
+                  </div>
                 </div>
               )}
               {!generating && !summary && citations.length === 0 && (
-                <div className="text-muted-foreground text-sm italic">No summary yet. Click Generate Summary.</div>
+                <div className="flex flex-col items-center justify-center p-12 text-center">
+                  <Sparkles className="h-12 w-12 text-slate-300 dark:text-slate-600 mb-3" />
+                  <p className="text-sm text-slate-500 dark:text-slate-400 font-medium">No summary yet</p>
+                  <p className="text-xs text-slate-400 dark:text-slate-500 mt-1">Click Generate Summary to begin</p>
+                </div>
               )}
               {!generating && citations.length > 0 && (
-                <div className="mt-2">
-                  <h3 className="text-xs font-semibold text-card-foreground mb-1">Evidence ({citations.length}) — click to open source</h3>
-                  <ul className="space-y-1 max-h-56 overflow-auto pr-1">
+                <div className="bg-white dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700 shadow-md overflow-hidden">
+                  <div className="bg-gradient-to-r from-amber-50 to-yellow-50 dark:from-amber-900/20 dark:to-yellow-900/20 px-4 py-2 border-b border-slate-200 dark:border-slate-700 flex items-center justify-between">
+                    <h3 className="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wide">
+                      Evidence Sources ({citations.length})
+                    </h3>
+                    <span className="text-[10px] text-slate-500 dark:text-slate-400">Click to view in report</span>
+                  </div>
+                  <ul className="space-y-2 max-h-96 overflow-auto p-3">
                     {citations.map((c, idx) => {
                       const meta = c.source_metadata || {}
                       const id = c.source_chunk_id ?? idx
                       const isExpanded = expandedCitationIds.has(id)
                       const page = meta.page ?? meta.page_number ?? 1
-                      // Prefer report_id inside source_metadata (backend enrichment) fallback to top-level
                       const reportId = meta.report_id ?? c.report_id ?? null
                       const reportObj = reportId ? reports.find(r => r.report_id === reportId) : null
                       const reportLabel = reportObj ? reportObj.filename : (reportId ? `report ${reportId}` : 'unknown report')
+                      const isActive = id === activeCitationId
+                      
                       const goToSource = () => {
                         if (!reportId) {
                           console.warn('Citation missing report_id', c)
@@ -254,12 +345,12 @@ export function PatientChartView({ patientId }) {
                         }
                         if (reportId !== selectedReportId) {
                           setSelectedReportId(reportId)
-                          // reset pageNumber later after PDF load? For now immediate.
                         }
                         setPageNumber(Math.max(1, parseInt(page, 10) || 1))
                         setActiveCitationId(id)
                         setActiveCitationText((c.source_full_text || c.source_text_preview || '').toLowerCase())
                       }
+                      
                       const toggle = () => {
                         setExpandedCitationIds(prev => {
                           const next = new Set(prev)
@@ -267,33 +358,82 @@ export function PatientChartView({ patientId }) {
                           return next
                         })
                       }
+                      
                       return (
-                        <li key={id} className="text-[11px] leading-snug bg-muted/30 border border-border rounded px-2 py-1">
-                          <div className="flex justify-between items-center gap-2">
-                            <span className="font-mono">chunk #{id}</span>
-                            <span className="text-muted-foreground">p{page} · ch{meta.chunk_index ?? '—'}</span>
-                            <span className="text-muted-foreground/70 truncate max-w-[90px]" title={reportLabel}>{reportLabel}</span>
-                            <button onClick={goToSource} className="text-primary text-[10px] px-1 py-0.5 border border-transparent hover:border-border rounded">
-                              view
-                            </button>
-                            <button onClick={toggle} className="text-primary text-[10px] px-1 py-0.5 border border-transparent hover:border-border rounded">
-                              {isExpanded ? 'collapse' : 'expand'}
-                            </button>
+                        <li key={id} className={cn(
+                          "rounded-lg border transition-all duration-200 overflow-hidden group",
+                          isActive 
+                            ? "border-amber-400 dark:border-amber-600 bg-gradient-to-r from-amber-50 to-yellow-50 dark:from-amber-900/30 dark:to-yellow-900/30 shadow-lg" 
+                            : "border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/50 hover:border-slate-300 dark:hover:border-slate-600 hover:shadow-md"
+                        )}>
+                          <div className="px-3 py-2 bg-slate-50 dark:bg-slate-900/30 border-b border-slate-200 dark:border-slate-700 flex items-center justify-between gap-2">
+                            <div className="flex items-center gap-2 flex-1 min-w-0">
+                              <span className={cn(
+                                "text-[10px] font-bold px-2 py-0.5 rounded-full",
+                                isActive 
+                                  ? "bg-amber-500 text-white"
+                                  : "bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-400"
+                              )}>
+                                #{id}
+                              </span>
+                              <span className="text-[10px] text-slate-500 dark:text-slate-400">
+                                Page {page} · Chunk {meta.chunk_index ?? '—'}
+                              </span>
+                              <span className="text-[10px] px-2 py-0.5 bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 rounded-full truncate max-w-[120px]" title={reportLabel}>
+                                {reportLabel}
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-1">
+                              <button 
+                                onClick={goToSource} 
+                                className={cn(
+                                  "text-[10px] px-2 py-1 rounded-md font-medium transition-all flex items-center gap-1",
+                                  isActive
+                                    ? "bg-amber-500 text-white"
+                                    : "bg-blue-500 text-white hover:bg-blue-600"
+                                )}
+                              >
+                                <Eye className="h-3 w-3" />
+                                View
+                              </button>
+                              <button 
+                                onClick={toggle} 
+                                className="text-[10px] px-2 py-1 rounded-md bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-300 dark:hover:bg-slate-600 transition-all"
+                              >
+                                {isExpanded ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
+                              </button>
+                            </div>
                           </div>
-                          <button onClick={goToSource} className={cn("mt-0.5 text-left block w-full whitespace-pre-wrap rounded px-1 py-0.5", id===activeCitationId ? "bg-primary/20 text-primary-foreground" : "text-muted-foreground/90 hover:bg-muted/50") }>
+                          <button 
+                            onClick={goToSource} 
+                            className={cn(
+                              "w-full text-left px-3 py-2 text-[11px] leading-relaxed transition-colors",
+                              isActive 
+                                ? "text-amber-900 dark:text-amber-100" 
+                                : "text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800"
+                            )}
+                          >
                             {isExpanded ? (c.source_full_text || c.source_text_preview) : c.source_text_preview}
                           </button>
                           {!reportObj && reportId && (
-                            <div className="mt-1 text-[10px] text-amber-600">Report not loaded in list</div>
+                            <div className="px-3 pb-2">
+                              <div className="text-[10px] text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 px-2 py-1 rounded border border-amber-200 dark:border-amber-800">
+                                ⚠️ Report not loaded in list
+                              </div>
+                            </div>
                           )}
                         </li>
                       )
                     })}
                   </ul>
                   {/* Debug: raw citations JSON */}
-                  <details className="mt-2">
-                    <summary className="text-[11px] text-muted-foreground cursor-pointer">debug: raw citations</summary>
-                    <pre className="text-[10px] whitespace-pre-wrap leading-relaxed font-mono bg-muted/40 p-2 rounded-md border border-border max-h-48 overflow-auto">{JSON.stringify(citations, null, 2)}</pre>
+                  <details className="m-3 mt-2">
+                    <summary className="text-[11px] text-slate-500 dark:text-slate-400 cursor-pointer hover:text-slate-700 dark:hover:text-slate-300 transition-colors font-medium">
+                      🔍 Debug: View Raw Citations JSON
+                    </summary>
+                    <pre className="mt-2 text-[10px] whitespace-pre-wrap leading-relaxed font-mono bg-slate-900 dark:bg-slate-950 text-green-400 p-3 rounded-md border border-slate-700 max-h-48 overflow-auto">
+                      {JSON.stringify(citations, null, 2)}
+                    </pre>
                   </details>
                 </div>
               )}
