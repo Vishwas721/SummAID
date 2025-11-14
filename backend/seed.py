@@ -178,17 +178,24 @@ def main():
         # Scan all PDFs and build patient mapping
         pdf_files = [f for f in os.listdir(PDF_DIRECTORY) if f.lower().endswith('.pdf')]
         
-        # Strategy: group by base name before first underscore or assign unique patient per file
+        # Strategy: group by base name before first underscore or number
         # For demo purposes, we'll create logical patient groupings:
-        # If files share a common prefix (before _), group them under same patient
+        # If files share a common prefix (before _ or before trailing digits), group them under same patient
+        import re
         for filename in pdf_files:
             base = os.path.splitext(filename)[0]
-            # Extract patient identifier: use the part before first underscore or the whole name
+            
+            # Try to extract patient identifier
+            # 1. Check for underscore separator (e.g., "jane_mri.pdf" -> "jane")
             parts = base.split('_')
-            if len(parts) > 1 and parts[0].lower() in ['patient', 'jane', 'john', 'demo']:
-                patient_key = parts[0].lower()  # e.g., "jane" from "jane_mri.pdf"
+            if len(parts) > 1 and parts[0].lower() in ['patient', 'jane', 'john', 'demo', 'vignesh']:
+                patient_key = parts[0].lower()
             else:
-                patient_key = base  # Use full base as unique patient
+                # 2. Remove trailing digits (e.g., "Vignesh1" -> "vignesh", "Vignesh2" -> "vignesh")
+                patient_key = re.sub(r'\d+$', '', base).lower().strip()
+                # If nothing left after removing digits, use the full base
+                if not patient_key:
+                    patient_key = base.lower()
             
             if patient_key not in patient_report_mapping:
                 patient_report_mapping[patient_key] = []

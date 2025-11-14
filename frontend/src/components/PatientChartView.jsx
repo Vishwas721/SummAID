@@ -4,7 +4,7 @@ import { Document, Page, pdfjs } from 'react-pdf'
 import 'react-pdf/dist/Page/AnnotationLayer.css'
 import 'react-pdf/dist/Page/TextLayer.css'
 import { PanelGroup, Panel, PanelResizeHandle } from 'react-resizable-panels'
-import { FileText, Sparkles, AlertTriangle, ChevronLeft, ChevronRight, Loader2, Eye, EyeOff } from 'lucide-react'
+import { FileText, Sparkles, AlertTriangle, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Loader2, Eye, EyeOff } from 'lucide-react'
 import { cn } from '../lib/utils'
 
 // Configure PDF.js worker - use local build from node_modules
@@ -29,6 +29,7 @@ export function PatientChartView({ patientId }) {
   const [pageNumber, setPageNumber] = useState(1)
   const [loadingReports, setLoadingReports] = useState(false)
   const [pdfError, setPdfError] = useState(null)
+  const [evidenceExpanded, setEvidenceExpanded] = useState(false)
 
   // Reset summary and citations when patient changes
   useEffect(() => {
@@ -252,8 +253,8 @@ export function PatientChartView({ patientId }) {
         </Panel>
         <PanelResizeHandle className="w-2 bg-gradient-to-r from-slate-200 via-blue-200 to-slate-200 dark:from-slate-700 dark:via-blue-800 dark:to-slate-700 hover:from-blue-400 hover:via-purple-400 hover:to-blue-400 transition-all duration-300 cursor-col-resize" />
         {/* Right Panel: Summary */}
-        <Panel defaultSize={45} minSize={25} className={"flex flex-col gap-0"}>
-          <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg h-full flex flex-col shadow-2xl m-4 ml-2">
+        <Panel defaultSize={45} minSize={25} className={"flex flex-col gap-0 min-h-0"}>
+          <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg h-full flex flex-col shadow-2xl m-4 ml-2 min-h-0">
             <div className="px-5 py-4 border-b border-slate-200 dark:border-slate-700 bg-gradient-to-r from-purple-50 to-blue-50 dark:from-purple-900/30 dark:to-blue-900/30 flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <div className="p-1.5 bg-gradient-to-br from-purple-500 to-blue-600 rounded-md shadow-md">
@@ -285,7 +286,7 @@ export function PatientChartView({ patientId }) {
                 )}
               </button>
             </div>
-            <div className="flex-1 p-5 overflow-auto flex flex-col gap-4 bg-slate-50 dark:bg-slate-900/50">
+            <div className="flex-1 p-5 overflow-hidden flex flex-col gap-4 bg-slate-50 dark:bg-slate-900/50 min-h-0">
               {error && (
                 <div className="text-sm text-red-700 dark:text-red-300 border border-red-300 dark:border-red-800 bg-red-50 dark:bg-red-900/20 rounded-lg p-4 flex items-start gap-3 shadow-sm">
                   <AlertTriangle className="h-5 w-5 flex-shrink-0 mt-0.5" />
@@ -303,11 +304,11 @@ export function PatientChartView({ patientId }) {
                 </div>
               )}
               {!generating && summary && (
-                <div className="bg-white dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700 shadow-md overflow-hidden">
-                  <div className="bg-gradient-to-r from-blue-50 to-purple-50 dark:from-blue-900/20 dark:to-purple-900/20 px-4 py-2 border-b border-slate-200 dark:border-slate-700">
+                <div className="bg-white dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700 shadow-md flex flex-col min-h-0 flex-1">
+                  <div className="bg-gradient-to-r from-blue-50 to-purple-50 dark:from-blue-900/20 dark:to-purple-900/20 px-4 py-2 border-b border-slate-200 dark:border-slate-700 flex-shrink-0">
                     <h3 className="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wide">Summary</h3>
                   </div>
-                  <div className="p-4 text-sm whitespace-pre-wrap leading-relaxed text-slate-700 dark:text-slate-300 max-h-96 overflow-auto">
+                  <div className="p-4 pb-6 pr-2 text-sm whitespace-pre-wrap leading-relaxed text-slate-700 dark:text-slate-300 overflow-auto scrollbar-thin flex-1 min-h-0">
                     {summary}
                   </div>
                 </div>
@@ -325,9 +326,19 @@ export function PatientChartView({ patientId }) {
                     <h3 className="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wide">
                       Evidence Sources ({citations.length})
                     </h3>
-                    <span className="text-[10px] text-slate-500 dark:text-slate-400">Click to view in report</span>
+                    <button
+                      onClick={() => setEvidenceExpanded(v => !v)}
+                      className="inline-flex items-center gap-1 text-[10px] font-semibold text-amber-700 dark:text-amber-300 hover:text-amber-900 dark:hover:text-amber-200 transition-colors"
+                      title={evidenceExpanded ? 'Collapse evidence' : 'Expand evidence'}
+                    >
+                      {evidenceExpanded ? <ChevronDown className="h-3 w-3"/> : <ChevronUp className="h-3 w-3"/>}
+                      {evidenceExpanded ? 'Collapse' : 'Expand'}
+                    </button>
                   </div>
-                  <ul className="space-y-2 max-h-96 overflow-auto p-3">
+                  <ul className={cn(
+                    "space-y-2 overflow-auto overscroll-contain p-3 pr-2 scrollbar-thin",
+                    evidenceExpanded ? "max-h-[60vh] pb-6" : "max-h-28"
+                  )}>
                     {citations.map((c, idx) => {
                       const meta = c.source_metadata || {}
                       const id = c.source_chunk_id ?? idx

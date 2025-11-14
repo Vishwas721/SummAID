@@ -135,13 +135,32 @@ def _embed_text(text: str) -> List[float]:
     raise HTTPException(status_code=500, detail=f"Embedding key missing in response: {data}")
 
 def _generate_summary(context_chunks: List[str], patient_label: str) -> str:
-    """Call local Ollama generate endpoint to produce a summary from provided context."""
-    # Basic prompt (Phase 1 skeleton) – can be refined later
+    """Call local Ollama generate endpoint to produce a synthesized clinical narrative from provided context."""
     joined = "\n\n".join(context_chunks)
     prompt = (
-    f"You are a clinical summarization assistant. Produce a concise, factual summary for patient '{patient_label}'.\n"
-        f"Use only the information in the provided context.\n"
-        f"Context:\n{joined}\n\nSummary:" )
+        f"You are an expert clinician synthesizing medical findings for patient '{patient_label}'. Write a clinical narrative that tells the story, not just lists results.\n\n"
+        f"CORE PRINCIPLES:\n"
+        f"1. CLINICAL STORY FIRST: Start with the PRIMARY clinical concern or pattern (e.g., 'This patient has persistent neutrophilic leukocytosis likely driven by an allergic/inflammatory process')\n"
+        f"2. EVIDENCE & TRENDS: Support your story with specific data and time trends:\n"
+        f"   - WBC trend: 16,810 (Apr 2025) → 10,020 (Sep 2025) - improving but still elevated\n"
+        f"   - Key finding: Serum IgE markedly elevated at 278 (ref <100) - suggests allergic etiology\n"
+        f"   - Supporting: ESR elevated in Sep suggesting ongoing inflammation\n"
+        f"3. CLINICAL SIGNIFICANCE: Explain WHY findings matter:\n"
+        f"   - 'The elevated IgE with neutrophilia suggests allergic inflammation rather than infection'\n"
+        f"   - 'Improvement in WBC suggests response to treatment or resolving trigger'\n"
+        f"4. DIFFERENTIAL & RULED OUT: Briefly mention what was excluded:\n"
+        f"   - 'Dengue ruled out; thyroid function normal'\n"
+        f"5. CLINICAL IMPRESSION: End with a 1-2 sentence summary of the clinical picture and what it means\n\n"
+        f"AVOID:\n"
+        f"- Bold formatting with ** (use plain text)\n"
+        f"- Generic section headers like 'Main Clinical Story' or 'Trend Analysis'\n"
+        f"- Listing every normal finding\n"
+        f"- Repeating the same information multiple times\n\n"
+        f"EXAMPLE GOOD OUTPUT:\n"
+        f"'Patient Vignesh (20/M) presents with neutrophilic leukocytosis that has significantly improved over 5 months (WBC 16,810→10,020), though remains elevated. The markedly elevated Serum IgE (278, ref <100) strongly suggests an underlying allergic or atopic process driving the leukocytosis. The elevated ESR in September indicates ongoing inflammation. Infectious etiologies including dengue have been ruled out, and thyroid function is normal. Clinical impression: Allergic/inflammatory leukocytosis with favorable trend, likely requires allergy workup and possible environmental trigger identification.'\n\n"
+        f"Context (Medical Reports):\n{joined}\n\n"
+        f"Clinical Narrative:"
+    )
     try:
         resp = requests.post(
             "http://localhost:11434/api/generate",
