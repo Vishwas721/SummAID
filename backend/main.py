@@ -135,84 +135,70 @@ def _embed_text(text: str) -> List[float]:
     raise HTTPException(status_code=500, detail=f"Embedding key missing in response: {data}")
 
 def _generate_summary(context_chunks: List[str], patient_label: str) -> str:
-    """Call local Ollama generate endpoint to produce a synthesized clinical narrative from provided context."""
+    """Generate synthesized clinical narrative with robust CUDA fallback and context trimming."""
     joined = "\n\n".join(context_chunks)
+    MAX_SAFE_CHARS = 18000
+    if len(joined) > MAX_SAFE_CHARS:
+        joined = joined[-MAX_SAFE_CHARS:]
+    approx_tokens = len(joined) // 4
+    logger.debug(f"Summarization context chars={len(joined)} approx_tokens={approx_tokens}")
     prompt = (
         f"You are an expert clinician synthesizing medical findings for patient '{patient_label}'. Write a clinical narrative that tells the story, not just lists results.\n\n"
-        f"CORE PRINCIPLES:\n"
-        f"1. CLINICAL STORY FIRST: Start with the PRIMARY clinical concern or pattern (e.g., 'This patient has persistent neutrophilic leukocytosis likely driven by an allergic/inflammatory process')\n"
-        f"2. EVIDENCE & TRENDS: Support your story with specific data and time trends:\n"
-        f"   - WBC trend: 16,810 (Apr 2025) → 10,020 (Sep 2025) - improving but still elevated\n"
-        f"   - Key finding: Serum IgE markedly elevated at 278 (ref <100) - suggests allergic etiology\n"
-        f"   - Supporting: ESR elevated in Sep suggesting ongoing inflammation\n"
-        f"3. CLINICAL SIGNIFICANCE: Explain WHY findings matter:\n"
-        f"   - 'The elevated IgE with neutrophilia suggests allergic inflammation rather than infection'\n"
-        f"   - 'Improvement in WBC suggests response to treatment or resolving trigger'\n"
-        f"4. DIFFERENTIAL & RULED OUT: Briefly mention what was excluded:\n"
-        f"   - 'Dengue ruled out; thyroid function normal'\n"
-        f"5. CLINICAL IMPRESSION: End with a 1-2 sentence summary of the clinical picture and what it means\n\n"
-        f"AVOID:\n"
-        f"- Bold formatting with ** (use plain text)\n"
-        f"- Generic section headers like 'Main Clinical Story' or 'Trend Analysis'\n"
-        f"- Listing every normal finding\n"
-        f"- Repeating the same information multiple times\n\n"
-        f"EXAMPLE GOOD OUTPUT:\n"
-        f"'Patient Vignesh (20/M) presents with neutrophilic leukocytosis that has significantly improved over 5 months (WBC 16,810→10,020), though remains elevated. The markedly elevated Serum IgE (278, ref <100) strongly suggests an underlying allergic or atopic process driving the leukocytosis. The elevated ESR in September indicates ongoing inflammation. Infectious etiologies including dengue have been ruled out, and thyroid function is normal. Clinical impression: Allergic/inflammatory leukocytosis with favorable trend, likely requires allergy workup and possible environmental trigger identification.'\n\n"
-        f"Context (Medical Reports):\n{joined}\n\n"
-        f"Clinical Narrative:"
+        f"Focus on: primary clinical pattern; meaningful trends with dates + values; plausible pathophysiologic linkage (e.g., allergic/inflammatory driver); and concise ruled-out items. End with a clinical impression. Avoid generic headers or enumerating every normal test.\n\n"
+        f"Context (Medical Reports):\n{joined}\n\nClinical Narrative:"
     )
-    try:
-        resp = requests.post(
-            "http://localhost:11434/api/generate",
-            json={
-                "model": GEN_MODEL,
-                "prompt": prompt,
-                "stream": False
-            }, timeout=120
-        )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Generation service error: {e}")
-    try:
-        data = resp.json()
-    except Exception:
-        raise HTTPException(status_code=500, detail=f"Non-JSON response from generate endpoint: {resp.text[:200]}")
-    if resp.status_code != 200:
-        raise HTTPException(status_code=500, detail=f"Generation error: {data}")
-    # Ollama /api/generate returns {'response': '...'}
-    summary = data.get('response') or data.get('output') or ''
-    if not summary:
-        raise HTTPException(status_code=500, detail=f"Empty summary response: {data}")
-    return summary.strip()
+
+    def _try(model_name: str, ctx: str) -> Tuple[bool, str]:
+        try:
+            r = requests.post(
+                "http://localhost:11434/api/generate",
+                json={"model": model_name, "prompt": ctx, "stream": False}, timeout=180
+            )
+        except Exception as e:
+            return False, f"network:{e}"
+        try:
+            data = r.json()
+        except Exception:
+            return False, f"non-json:{r.text[:180]}"
+        if r.status_code != 200:
+            return False, json.dumps(data)[:300]
+        out = data.get('response') or data.get('output') or ''
+        if not out:
+            return False, f"empty:{data}" 
+        return True, out.strip()
+
+    ok, primary = _try(GEN_MODEL, prompt)
+    if ok:
+        return primary
+    lower_err = primary.lower()
+    if any(k in lower_err for k in ["cuda", "oom", "terminated", "memory"]):
+        logger.warning(f"GPU-related generation failure detected: {primary}")
+        fallbacks = [f"{GEN_MODEL}-q4", "llama3:8b-q4", "llama3:8b-instruct"]
+        for fm in fallbacks:
+            ok2, res2 = _try(fm, prompt)
+            if ok2:
+                return res2 + "\n(Note: Quantized fallback model used due to GPU memory constraints.)"
+        # Reduce context aggressively (keep final half)
+        reduced = joined[-(MAX_SAFE_CHARS // 2):]
+        reduced_prompt = prompt.replace("Context (Medical Reports):\n" + joined, "Context (Reduced Extract):\n" + reduced)
+        ok3, res3 = _try(GEN_MODEL, reduced_prompt)
+        if ok3:
+            return res3 + "\n(Note: Context reduced due to GPU memory constraints.)"
+        raise HTTPException(status_code=500, detail=f"Generation GPU error; all fallbacks failed: {primary}")
+    raise HTTPException(status_code=500, detail=f"Generation error: {primary}")
 
 def _normalize_text(s: str) -> str:
-    """Normalize Unicode and fix common mojibake artifacts from PDF/OCR.
-    This is a light-touch pass to improve readability without altering meaning.
-    """
+    """Normalize Unicode and fix common mojibake artifacts from PDF/OCR."""
     if not isinstance(s, str):
         return s
-    # Unicode normalization
     s = unicodedata.normalize('NFKC', s)
-    # Common mojibake replacements
     replacements = {
-        'â€¦': '…',
-        'â€“': '–',
-        'â€”': '—',
-        'â€˜': '‘',
-        'â€™': '’',
-        'â€œ': '“',
-        'â€': '”',
-        'Â·': '·',
-        'Â®': '®',
-        'Â©': '©',
-        'Â°': '°',
-        'Â±': '±',
-        'Â': ' ',  # stray non-breaking artifact
+        'â€¦': '…','â€“': '–','â€”': '—','â€˜': '‘','â€™': '’','â€œ': '“','â€': '”',
+        'Â·': '·','Â®': '®','Â©': '©','Â°': '°','Â±': '±','Â': ' '
     }
     for k, v in replacements.items():
         s = s.replace(k, v)
-    # Normalize whitespace
     s = s.replace('\r\n', '\n').replace('\r', '\n')
-    # Collapse overlong whitespace runs
     s = '\n'.join(' '.join(line.split()) for line in s.split('\n'))
     return s.strip()
 
