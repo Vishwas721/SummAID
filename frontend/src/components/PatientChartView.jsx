@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
+import jsPDF from 'jspdf'
 import axios from 'axios'
 import { Document, Page, pdfjs } from 'react-pdf'
 import 'react-pdf/dist/Page/AnnotationLayer.css'
@@ -94,6 +95,176 @@ export function PatientChartView({ patientId }) {
       setError(e.response?.data?.detail || e.message || 'Unknown error')
     } finally {
       setGenerating(false)
+    }
+  }
+
+  const handleDownloadPdf = () => {
+    try {
+      const doc = new jsPDF({ unit: 'pt', format: 'a4' })
+      const margin = 40
+      const pageWidth = doc.internal.pageSize.getWidth()
+      const pageHeight = doc.internal.pageSize.getHeight()
+      const maxWidth = pageWidth - margin * 2
+      let y = margin
+
+      const addHeading = (text) => {
+        doc.setFont('helvetica', 'bold')
+        doc.setFontSize(12)
+        y = ensurePageSpace(doc, y, 18, margin)
+        doc.text(text, margin, y)
+        y += 8
+        doc.setDrawColor(200)
+        doc.line(margin, y, pageWidth - margin, y)
+        y += 10
+      }
+
+      const addParagraph = (text) => {
+        if (!text) return
+        doc.setFont('helvetica', 'normal')
+        doc.setFontSize(11)
+        const lines = doc.splitTextToSize(text, maxWidth)
+        for (const line of lines) {
+          y = ensurePageSpace(doc, y, 14, margin)
+          doc.text(line, margin, y)
+          y += 14
+        }
+      }
+
+      const addBullets = (items) => {
+        if (!items || items.length === 0) return
+        doc.setFont('helvetica', 'normal')
+        doc.setFontSize(11)
+        for (const it of items) {
+          const textLines = doc.splitTextToSize(it, maxWidth - 16)
+          y = ensurePageSpace(doc, y, 14 * textLines.length, margin)
+          doc.text('•', margin, y)
+          doc.text(textLines, margin + 12, y)
+          y += 14 * textLines.length
+        }
+      }
+
+      // Title + metadata
+      doc.setFont('helvetica', 'bold')
+      doc.setFontSize(16)
+      doc.text('AI Summary', margin, y)
+      y += 24
+      doc.setFont('helvetica', 'normal')
+      doc.setFontSize(10)
+      const ts = new Date().toLocaleString()
+      let metaLine = `Patient: ${patientId}`
+      doc.text(metaLine, margin, y)
+      if (chiefComplaint) {
+        doc.text(`Chief Complaint: ${chiefComplaint}`, margin + 220, y)
+      }
+      y += 16
+      doc.text(`Generated: ${ts}`, margin, y)
+      y += 20
+
+      // Parse summary into sections
+      const raw = summary || ''
+      const lines = raw.split(/\r?\n/)
+      let section = ''
+      let mainStory = ''
+      const keyFindings = []
+      const evolution = []
+      const labRows = []
+      for (let i = 0; i < lines.length; i++) {
+        const ln = lines[i]
+        const t = ln.trim()
+        if (/^Main Story\s*:/.test(t)) { section = 'main'; continue }
+        if (/^Key Findings\s*:/.test(t)) { section = 'key'; continue }
+        if (/^Lab Values\s*:/.test(t)) { section = 'labs'; continue }
+        if (/^Evolution\s*:/.test(t)) { section = 'evol'; continue }
+        if (!t) continue
+        if (section === 'main') {
+          if (t.startsWith('- ')) {
+            mainStory = t.slice(2)
+          } else {
+            mainStory = (mainStory ? mainStory + ' ' : '') + t
+          }
+        } else if (section === 'key') {
+          keyFindings.push(t.replace(/^\-\s*/, ''))
+        } else if (section === 'evol') {
+          evolution.push(t.replace(/^\-\s*/, ''))
+        } else if (section === 'labs') {
+          if (t.startsWith('|') && t.endsWith('|') && !/\|\s*-+\s*\|/.test(t)) {
+            const cells = t.split('|').map(s => s.trim()).filter(Boolean)
+            if (cells.length >= 4) labRows.push(cells.slice(0, 4))
+          }
+        }
+      }
+
+      // Render summary sections
+      if (mainStory) {
+        addHeading('Main Story')
+        addParagraph(mainStory)
+      }
+      if (keyFindings.length) {
+        addHeading('Key Findings')
+        addBullets(keyFindings)
+      }
+      if (labRows.length) {
+        addHeading('Lab Values')
+        // Render as simple fixed columns using monospace
+        doc.setFont('courier', 'normal')
+        doc.setFontSize(10)
+        const cols = [100, 180, 120, 80]
+        const totalCols = cols.reduce((a, b) => a + b, 0)
+        const scale = Math.min(1, (maxWidth) / totalCols)
+        const cw = cols.map(w => w * scale)
+        const headers = ['Date', 'Test', 'Value', 'Flag']
+        y = ensurePageSpace(doc, y, 16, margin)
+        let x = margin
+        doc.setFont('courier', 'bold')
+        headers.forEach((h, i) => { doc.text(h, x, y); x += cw[i] })
+        doc.setFont('courier', 'normal')
+        y += 10
+        for (const row of labRows) {
+          y = ensurePageSpace(doc, y, 14, margin)
+          let xx = margin
+          row.forEach((cell, i) => {
+            const clipped = String(cell)
+            doc.text(clipped, xx, y)
+            xx += cw[i]
+          })
+          y += 14
+        }
+        doc.setFont('helvetica', 'normal')
+      }
+      if (evolution.length) {
+        addHeading('Evolution')
+        addBullets(evolution)
+      }
+
+      // Evidence Sources
+      if (citations && citations.length) {
+        addHeading(`Evidence Sources (${citations.length})`)
+        doc.setFont('helvetica', 'normal')
+        doc.setFontSize(10)
+        citations.forEach((c, idx) => {
+          const meta = c.source_metadata || {}
+          const page = meta.page ?? meta.page_number ?? '—'
+          const reportId = meta.report_id ?? c.report_id
+          const report = reports.find(r => r.report_id === reportId)
+          const label = report ? report.filename : (reportId ? `report ${reportId}` : 'unknown report')
+          const line = `• ${label}, page ${page} — ${c.source_text_preview || ''}`
+          const wrapped = doc.splitTextToSize(line, maxWidth)
+          for (const ln2 of wrapped) {
+            y = ensurePageSpace(doc, y, 14, margin)
+            doc.text(ln2, margin, y)
+            y += 14
+          }
+        })
+      }
+
+      // Save
+      const pad = (n) => String(n).padStart(2, '0')
+      const d = new Date()
+      const fname = `Summary_${patientId}_${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}.pdf`
+      doc.save(fname)
+    } catch (e) {
+      console.error('PDF generation error', e)
+      alert('Failed to generate PDF: ' + (e?.message || e))
     }
   }
 
@@ -264,29 +435,44 @@ export function PatientChartView({ patientId }) {
                 </div>
                 <h2 className="text-base font-bold text-slate-800 dark:text-slate-100">AI Summary</h2>
               </div>
-              <button
-                onClick={handleGenerate}
-                disabled={generating}
-                className={cn(
-                  "px-4 py-2 text-xs font-bold rounded-lg transition-all duration-200 shadow-md",
-                  "flex items-center gap-2",
-                  generating 
-                    ? "bg-slate-300 dark:bg-slate-600 text-slate-500 dark:text-slate-400 cursor-not-allowed"
-                    : "bg-gradient-to-r from-purple-500 to-blue-600 text-white hover:from-purple-600 hover:to-blue-700 hover:shadow-lg hover:scale-105"
-                )}
-              >
-                {generating ? (
-                  <>
-                    <Loader2 className="h-3 w-3 animate-spin" />
-                    Generating…
-                  </>
-                ) : (
-                  <>
-                    <Sparkles className="h-3 w-3" />
-                    Generate Summary
-                  </>
-                )}
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={handleGenerate}
+                  disabled={generating}
+                  className={cn(
+                    "px-4 py-2 text-xs font-bold rounded-lg transition-all duration-200 shadow-md",
+                    "flex items-center gap-2",
+                    generating 
+                      ? "bg-slate-300 dark:bg-slate-600 text-slate-500 dark:text-slate-400 cursor-not-allowed"
+                      : "bg-gradient-to-r from-purple-500 to-blue-600 text-white hover:from-purple-600 hover:to-blue-700 hover:shadow-lg hover:scale-105"
+                  )}
+                >
+                  {generating ? (
+                    <>
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                      Generating…
+                    </>
+                  ) : (
+                    <>
+                      <Sparkles className="h-3 w-3" />
+                      Generate Summary
+                    </>
+                  )}
+                </button>
+                <button
+                  onClick={handleDownloadPdf}
+                  disabled={!summary && citations.length === 0}
+                  className={cn(
+                    "px-4 py-2 text-xs font-bold rounded-lg transition-all duration-200 shadow-md",
+                    !summary && citations.length === 0
+                      ? "bg-slate-200 dark:bg-slate-700 text-slate-400 cursor-not-allowed"
+                      : "bg-white dark:bg-slate-900/60 text-slate-700 dark:text-slate-200 border border-slate-300 dark:border-slate-600 hover:bg-slate-50 dark:hover:bg-slate-800"
+                  )}
+                  title={summary || citations.length > 0 ? "Download PDF" : "Generate a summary first"}
+                >
+                  Download PDF
+                </button>
+              </div>
             </div>
             <div className="flex-1 p-5 overflow-hidden flex flex-col gap-4 bg-slate-50 dark:bg-slate-900/50 min-h-0">
               {/* Visit Reason / Chief Complaint input */}
@@ -485,3 +671,14 @@ export function PatientChartView({ patientId }) {
     </div>
   )
 }
+
+// Helpers for PDF generation
+function ensurePageSpace(doc, y, needed, margin) {
+  const pageHeight = doc.internal.pageSize.getHeight()
+  if (y + needed > pageHeight - margin) {
+    doc.addPage()
+    return margin
+  }
+  return y
+}
+
