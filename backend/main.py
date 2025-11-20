@@ -143,9 +143,30 @@ def _generate_summary(context_chunks: List[str], patient_label: str) -> str:
     approx_tokens = len(joined) // 4
     logger.debug(f"Summarization context chars={len(joined)} approx_tokens={approx_tokens}")
     prompt = (
-        f"You are an expert clinician synthesizing medical findings for patient '{patient_label}'. Write a clinical narrative that tells the story, not just lists results.\n\n"
-        f"Focus on: primary clinical pattern; meaningful trends with dates + values; plausible pathophysiologic linkage (e.g., allergic/inflammatory driver); and concise ruled-out items. End with a clinical impression. Avoid generic headers or enumerating every normal test.\n\n"
-        f"Context (Medical Reports):\n{joined}\n\nClinical Narrative:"
+        f"You are a clinical assistant. Summarize these reports for a doctor.\n\n"
+        f"Strict Formatting Rules:\n"
+        f"- Key Findings: Use bullet points.\n"
+        f"- Lab Values: If there are lab results, output them in a Markdown table with columns: Date | Test | Value | Flag (High/Low/Normal). Include only abnormal or clinically relevant normals for rule-outs.\n"
+        f"- Evolution: Explicitly describe how values or sizes changed from the oldest to the newest report.\n"
+        f"- Do not write long paragraphs. Keep sentences concise. No decorative formatting.\n\n"
+        f"Additional Guidance:\n"
+        f"- Identify the main clinical story in one line (e.g., 'Persistent neutrophilic leukocytosis with improving trend').\n"
+        f"- Prefer specific numbers with units and dates, exactly as given.\n"
+        f"- Do not invent or infer values or dates that are not present in the context.\n"
+        f"- If no labs are present, omit the Lab Values table section.\n\n"
+        f"Output exactly in the following order and headings (no extra sections):\n\n"
+        f"Main Story:\n"
+        f"- <one-line main story>\n\n"
+        f"Key Findings:\n"
+        f"- <bullet>\n- <bullet>\n\n"
+        f"Lab Values:\n"
+        f"| Date | Test | Value | Flag |\n"
+        f"|---|---|---|---|\n"
+        f"[add rows only if labs exist]\n\n"
+        f"Evolution:\n"
+        f"- <bulleted trend statements from oldest → newest>\n\n"
+        f"Context:\n{joined}\n\n"
+        f"Summary:"
     )
 
     def _try(model_name: str, ctx: str) -> Tuple[bool, str]:
@@ -330,8 +351,7 @@ async def summarize_patient(
         for cid,rid,txt,meta in similarity_chunks:
             sig = txt[:200]
             if sig in seen: continue
-            seen.add(sig); merged.app
-            end((cid,rid,txt,meta))
+            seen.add(sig); merged.append((cid,rid,txt,meta))
         context_accum: List[Tuple[int,int,str,dict]] = []
         total_chars = 0
         for cid,rid,txt,meta in merged:
