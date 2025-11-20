@@ -330,7 +330,8 @@ async def summarize_patient(
         for cid,rid,txt,meta in similarity_chunks:
             sig = txt[:200]
             if sig in seen: continue
-            seen.add(sig); merged.append((cid,rid,txt,meta))
+            seen.add(sig); merged.app
+            end((cid,rid,txt,meta))
         context_accum: List[Tuple[int,int,str,dict]] = []
         total_chars = 0
         for cid,rid,txt,meta in merged:
