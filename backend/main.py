@@ -109,6 +109,7 @@ class SummarizeRequest(BaseModel):
     keywords: Optional[List[str]] = Field(default=None, description="Optional keyword filters for hybrid search")
     max_chunks: int = Field(default=20, ge=1, le=50, description="Maximum number of chunks from similarity search (increased to capture more context including critical findings)")
     max_context_chars: int = Field(default=12000, ge=500, le=60000, description="Max characters of context sent to model")
+    chief_complaint: Optional[str] = Field(default=None, description="Optional visit reason / chief complaint to bias retrieval toward relevant abnormalities")
 
 def _embed_text(text: str) -> List[float]:
     """Call local Ollama embed endpoint and return embedding (list of floats)."""
@@ -259,8 +260,12 @@ async def summarize_patient(
         if payload.keywords:
             embed_basis = " ".join(payload.keywords)
         else:
-            # Clinically-focused query to boost FINDINGS/IMPRESSION sections
-            embed_basis = "clinical findings diagnosis impression key findings radiological findings pathology results"
+            # Clinically-focused query to boost FINDINGS/IMPRESSION sections, with optional chief complaint focus
+            if payload.chief_complaint and payload.chief_complaint.strip():
+                cc = payload.chief_complaint.strip()
+                embed_basis = f"clinical findings diagnosis impression abnormalities related to {cc} key findings radiological findings pathology results"
+            else:
+                embed_basis = "clinical findings diagnosis impression key findings radiological findings pathology results"
         
         query_embedding = _embed_text(embed_basis)
         if len(query_embedding) != 768:

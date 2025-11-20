@@ -30,6 +30,7 @@ export function PatientChartView({ patientId }) {
   const [loadingReports, setLoadingReports] = useState(false)
   const [pdfError, setPdfError] = useState(null)
   const [evidenceExpanded, setEvidenceExpanded] = useState(false)
+  const [chiefComplaint, setChiefComplaint] = useState('')
 
   // Reset summary and citations when patient changes
   useEffect(() => {
@@ -81,6 +82,7 @@ export function PatientChartView({ patientId }) {
       const url = `${import.meta.env.VITE_API_URL}/summarize/${encodeURIComponent(patientId)}`
       const response = await axios.post(url, {
         keywords: null,
+        chief_complaint: chiefComplaint || null,
         max_chunks: 20,  // Increased to capture more context including FINDINGS/IMPRESSION sections
         max_context_chars: 16000  // Increased to accommodate more chunks
       })
@@ -287,6 +289,34 @@ export function PatientChartView({ patientId }) {
               </button>
             </div>
             <div className="flex-1 p-5 overflow-hidden flex flex-col gap-4 bg-slate-50 dark:bg-slate-900/50 min-h-0">
+              {/* Visit Reason / Chief Complaint input */}
+              <div className="bg-white dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700 shadow-sm p-3 flex items-center gap-3">
+                <label htmlFor="chief-complaint" className="text-[11px] font-semibold text-slate-600 dark:text-slate-300 whitespace-nowrap">
+                  Visit Reason / Chief Complaint
+                </label>
+                <input
+                  id="chief-complaint"
+                  type="text"
+                  value={chiefComplaint}
+                  onChange={(e) => setChiefComplaint(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') handleGenerate() }}
+                  placeholder="e.g., Worsening headaches, chest pain, fever"
+                  className="flex-1 text-xs px-3 py-2 rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-700 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-400 dark:focus:ring-blue-600"
+                />
+                <button
+                  onClick={handleGenerate}
+                  disabled={generating}
+                  className={cn(
+                    "px-3 py-2 text-[11px] font-bold rounded-md transition-all duration-200 shadow-sm",
+                    generating
+                      ? "bg-slate-300 dark:bg-slate-600 text-slate-500 dark:text-slate-400 cursor-not-allowed"
+                      : "bg-gradient-to-r from-purple-500 to-blue-600 text-white hover:from-purple-600 hover:to-blue-700"
+                  )}
+                  title="Generate summary with this visit reason"
+                >
+                  {generating ? 'Working…' : 'Apply'}
+                </button>
+              </div>
               {error && (
                 <div className="text-sm text-red-700 dark:text-red-300 border border-red-300 dark:border-red-800 bg-red-50 dark:bg-red-900/20 rounded-lg p-4 flex items-start gap-3 shadow-sm">
                   <AlertTriangle className="h-5 w-5 flex-shrink-0 mt-0.5" />
