@@ -517,7 +517,7 @@ export function PatientChartView({ patientId }) {
     <div className="h-full w-full bg-gradient-to-br from-slate-50 via-white to-blue-50 dark:from-slate-900 dark:via-slate-800 dark:to-blue-900">
       <PanelGroup direction="horizontal" className="h-full">
         {/* Left Panel: PDF Viewer */}
-        <Panel defaultSize={55} minSize={35} className={cn("bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg overflow-hidden flex flex-col shadow-2xl m-4 mr-2")}>          
+        <Panel defaultSize={55} minSize={35} className={cn("bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg overflow-hidden flex flex-col shadow-2xl m-4 mr-2")}>
           <div className="px-5 py-4 border-b border-slate-200 dark:border-slate-700 bg-gradient-to-r from-slate-50 to-blue-50 dark:from-slate-800 dark:to-blue-900/30 flex flex-col gap-3">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
@@ -634,7 +634,8 @@ export function PatientChartView({ patientId }) {
                   </div>
                 )}
               </div>
-            ) : (
+           
+              ) : (
               <div className="flex flex-col items-center justify-center h-full text-center p-12">
                 <FileText className="h-16 w-16 text-slate-300 dark:text-slate-600 mb-4" />
                 <p className="text-sm text-slate-500 dark:text-slate-400">
@@ -646,163 +647,134 @@ export function PatientChartView({ patientId }) {
         </Panel>
         <PanelResizeHandle className="w-2 bg-gradient-to-r from-slate-200 via-blue-200 to-slate-200 dark:from-slate-700 dark:via-blue-800 dark:to-slate-700 hover:from-blue-400 hover:via-purple-400 hover:to-blue-400 transition-all duration-300 cursor-col-resize" />
         {/* Right Panel: Summary & Chat */}
-        <Panel defaultSize={45} minSize={25} className={"flex flex-col gap-0 min-h-0"}>
+        <Panel defaultSize={45} minSize={25} className="flex flex-col gap-0 min-h-0">
           <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg h-full flex flex-col shadow-2xl m-4 ml-2 min-h-0">
             {/* Tabs Header */}
-            <div className="px-5 py-3 border-b border-slate-200 dark:border-slate-700 bg-gradient-to-r from-purple-50 to-blue-50 dark:from-purple-900/30 dark:to-blue-900/30">
-              <div className="flex items-center gap-1 mb-3">
-                <button
-                  onClick={() => setActiveTab('summary')}
-                  className={cn(
-                    "flex items-center gap-2 px-4 py-2 text-sm font-bold rounded-lg transition-all duration-200",
-                    activeTab === 'summary'
-                      ? "bg-gradient-to-r from-purple-500 to-blue-600 text-white shadow-md"
-                      : "text-slate-600 dark:text-slate-400 hover:bg-white/50 dark:hover:bg-slate-700/50"
-                  )}
-                >
-                  <Sparkles className="h-4 w-4" />
-                  Summary
-                </button>
-                <button
-                  onClick={() => setActiveTab('chat')}
-                  className={cn(
-                    "flex items-center gap-2 px-4 py-2 text-sm font-bold rounded-lg transition-all duration-200",
-                    activeTab === 'chat'
-                      ? "bg-gradient-to-r from-purple-500 to-blue-600 text-white shadow-md"
-                      : "text-slate-600 dark:text-slate-400 hover:bg-white/50 dark:hover:bg-slate-700/50"
-                  )}
-                >
-                  <MessageSquare className="h-4 w-4" />
-                  Chat Assistant
-                </button>
+            <div className="px-4 py-3 border-b border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-1">
+                  <button
+                    onClick={() => setActiveTab('summary')}
+                    className={cn(
+                      "flex items-center gap-2 px-3 py-1.5 text-xs font-semibold rounded-md transition-all",
+                      activeTab === 'summary'
+                        ? "bg-blue-500 text-white"
+                        : "text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700"
+                    )}
+                  >
+                    <Sparkles className="h-3.5 w-3.5" />
+                    Summary
+                  </button>
+                  <button
+                    onClick={() => setActiveTab('chat')}
+                    className={cn(
+                      "flex items-center gap-2 px-3 py-1.5 text-xs font-semibold rounded-md transition-all",
+                      activeTab === 'chat'
+                        ? "bg-blue-500 text-white"
+                        : "text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700"
+                    )}
+                  >
+                    <MessageSquare className="h-3.5 w-3.5" />
+                    Chat
+                  </button>
+                </div>
+                {activeTab === 'summary' && (
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={handleDownloadPdf}
+                      disabled={!summary}
+                      className={cn(
+                        "px-3 py-1.5 text-xs font-medium rounded-md transition-all",
+                        !summary
+                          ? "bg-slate-100 dark:bg-slate-700 text-slate-400 cursor-not-allowed"
+                          : "bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-600"
+                      )}
+                    >
+                      Export PDF
+                    </button>
+                  </div>
+                )}
               </div>
-              {/* Action buttons - only show for Summary tab */}
-              {activeTab === 'summary' && (
-                <div className="flex items-center gap-2">
-                <button
-                  onClick={handleGenerate}
-                  disabled={generating}
-                  className={cn(
-                    "px-4 py-2 text-xs font-bold rounded-lg transition-all duration-200 shadow-md",
-                    "flex items-center gap-2",
-                    generating 
-                      ? "bg-slate-300 dark:bg-slate-600 text-slate-500 dark:text-slate-400 cursor-not-allowed"
-                      : "bg-gradient-to-r from-purple-500 to-blue-600 text-white hover:from-purple-600 hover:to-blue-700 hover:shadow-lg hover:scale-105"
-                  )}
-                >
-                  {generating ? (
-                    <>
-                      <Loader2 className="h-3 w-3 animate-spin" />
-                      Generating…
-                    </>
-                  ) : (
-                    <>
-                      <Sparkles className="h-3 w-3" />
-                      Generate Summary
-                    </>
-                  )}
-                </button>
-                <button
-                  onClick={handleDownloadPdf}
-                  disabled={!summary && citations.length === 0}
-                  className={cn(
-                    "px-4 py-2 text-xs font-bold rounded-lg transition-all duration-200 shadow-md",
-                    !summary && citations.length === 0
-                      ? "bg-slate-200 dark:bg-slate-700 text-slate-400 cursor-not-allowed"
-                      : "bg-white dark:bg-slate-900/60 text-slate-700 dark:text-slate-200 border border-slate-300 dark:border-slate-600 hover:bg-slate-50 dark:hover:bg-slate-800"
-                  )}
-                  title={summary || citations.length > 0 ? "Download PDF" : "Generate a summary first"}
-                >
-                  Download PDF
-                </button>
-              </div>
-              )}
             </div>
             
             {/* Tab Content */}
             {activeTab === 'summary' ? (
               // Summary Tab Content
-              <div className="flex-1 p-5 overflow-hidden flex flex-col gap-4 bg-slate-50 dark:bg-slate-900/50 min-h-0">
-              {/* Visit Reason / Chief Complaint input */}
-              <div className="bg-white dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700 shadow-sm p-3 flex items-center gap-3">
-                <label htmlFor="chief-complaint" className="text-[11px] font-semibold text-slate-600 dark:text-slate-300 whitespace-nowrap">
-                  Visit Reason / Chief Complaint
-                </label>
-                <input
-                  id="chief-complaint"
-                  type="text"
-                  value={chiefComplaint}
-                  onChange={(e) => setChiefComplaint(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === 'Enter') handleGenerate() }}
-                  placeholder="e.g., Worsening headaches, chest pain, fever"
-                  className="flex-1 text-xs px-3 py-2 rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-700 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-400 dark:focus:ring-blue-600"
-                />
-                <button
-                  onClick={handleGenerate}
-                  disabled={generating}
-                  className={cn(
-                    "px-3 py-2 text-[11px] font-bold rounded-md transition-all duration-200 shadow-sm",
-                    generating
-                      ? "bg-slate-300 dark:bg-slate-600 text-slate-500 dark:text-slate-400 cursor-not-allowed"
-                      : "bg-gradient-to-r from-purple-500 to-blue-600 text-white hover:from-purple-600 hover:to-blue-700"
-                  )}
-                  title="Generate summary with this visit reason"
-                >
-                  {generating ? 'Working…' : 'Apply'}
-                </button>
+              <div className="flex-1 overflow-hidden flex flex-col bg-white dark:bg-slate-800 min-h-0">
+              {/* Chief Complaint + Generate Action Bar */}
+              <div className="px-4 py-3 border-b border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900/30">
+                <div className="flex items-center gap-2">
+                  <input
+                    id="chief-complaint"
+                    type="text"
+                    value={chiefComplaint}
+                    onChange={(e) => setChiefComplaint(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter' && !generating) handleGenerate() }}
+                    placeholder="Chief complaint (optional)"
+                    className="flex-1 text-xs px-3 py-2 rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-700 dark:text-slate-100 focus:outline-none focus:ring-1 focus:ring-blue-400"
+                  />
+                  <button
+                    onClick={handleGenerate}
+                    disabled={generating}
+                    className={cn(
+                      "px-4 py-2 text-xs font-semibold rounded-md transition-all flex items-center gap-2 whitespace-nowrap",
+                      generating
+                        ? "bg-slate-300 dark:bg-slate-600 text-slate-500 cursor-not-allowed"
+                        : "bg-blue-500 text-white hover:bg-blue-600"
+                    )}
+                  >
+                    {generating ? (
+                      <>
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        Generating
+                      </>
+                    ) : (
+                      <>
+                        <Sparkles className="h-3.5 w-3.5" />
+                        Generate
+                      </>
+                    )}
+                  </button>
+                </div>
               </div>
-              {error && (
-                <div className="text-sm text-red-700 dark:text-red-300 border border-red-300 dark:border-red-800 bg-red-50 dark:bg-red-900/20 rounded-lg p-4 flex items-start gap-3 shadow-sm">
-                  <AlertTriangle className="h-5 w-5 flex-shrink-0 mt-0.5" />
-                  <div>
-                    <p className="font-semibold mb-1">Error Generating Summary</p>
-                    <p className="text-xs">{error}</p>
+              
+              {/* Main Summary Content */}
+              <div className="flex-1 overflow-auto p-4 min-h-0">
+                {error && (
+                  <div className="mb-4 text-sm text-red-700 dark:text-red-300 border border-red-300 dark:border-red-800 bg-red-50 dark:bg-red-900/20 rounded-md p-3 flex items-start gap-2">
+                    <AlertTriangle className="h-4 w-4 flex-shrink-0 mt-0.5" />
+                    <div className="text-xs">{error}</div>
                   </div>
-                </div>
-              )}
-              {/* Glass Box: clickable evidence list */}
-              {generating && (
-                <div className="flex items-center gap-3 text-sm text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20 p-4 rounded-lg border border-blue-200 dark:border-blue-800 animate-pulse">
-                  <Loader2 className="h-5 w-5 animate-spin" />
-                  <span className="font-medium">Generating AI summary...</span>
-                </div>
-              )}
-              {!generating && summary && (
-                <div className="bg-white dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700 shadow-md flex flex-col min-h-0 flex-1">
-                  <div className="bg-gradient-to-r from-blue-50 to-purple-50 dark:from-blue-900/20 dark:to-purple-900/20 px-4 py-2 border-b border-slate-200 dark:border-slate-700 flex-shrink-0">
-                    <h3 className="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wide">Summary</h3>
+                )}
+                
+                {generating && (
+                  <div className="flex items-center gap-3 text-sm text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20 p-4 rounded-md border border-blue-200 dark:border-blue-800">
+                    <Loader2 className="h-5 w-5 animate-spin" />
+                    <span>Analyzing patient records...</span>
                   </div>
-                  <div className="p-4 pb-6 pr-2 text-sm whitespace-pre-wrap leading-relaxed text-slate-700 dark:text-slate-300 overflow-auto scrollbar-thin flex-1 min-h-0">
-                    {summary}
+                )}
+                
+                {!generating && summary && (
+                  <div className="prose prose-sm dark:prose-invert max-w-none">
+                    <div className="text-sm leading-relaxed text-slate-700 dark:text-slate-300 whitespace-pre-wrap">
+                      {summary}
+                    </div>
                   </div>
-                </div>
-              )}
-              {!generating && !summary && citations.length === 0 && (
-                <div className="flex flex-col items-center justify-center p-12 text-center">
-                  <Sparkles className="h-12 w-12 text-slate-300 dark:text-slate-600 mb-3" />
-                  <p className="text-sm text-slate-500 dark:text-slate-400 font-medium">No summary yet</p>
-                  <p className="text-xs text-slate-400 dark:text-slate-500 mt-1">Click Generate Summary to begin</p>
-                </div>
-              )}
+                )}
+                
+                {!generating && !summary && (
+                  <div className="flex flex-col items-center justify-center h-full text-center py-12">
+                    <Sparkles className="h-12 w-12 text-slate-300 dark:text-slate-600 mb-3" />
+                    <p className="text-sm text-slate-500 dark:text-slate-400 font-medium">No summary generated</p>
+                    <p className="text-xs text-slate-400 dark:text-slate-500 mt-1">Click Generate to create AI summary</p>
+                  </div>
+                )}
               {!generating && citations.length > 0 && (
-                <div className="bg-white dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700 shadow-md overflow-hidden">
-                  <div className="bg-gradient-to-r from-amber-50 to-yellow-50 dark:from-amber-900/20 dark:to-yellow-900/20 px-4 py-2 border-b border-slate-200 dark:border-slate-700 flex items-center justify-between">
-                    <h3 className="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wide">
-                      Evidence Sources ({citations.length})
-                    </h3>
-                    <button
-                      onClick={() => setEvidenceExpanded(v => !v)}
-                      className="inline-flex items-center gap-1 text-[10px] font-semibold text-amber-700 dark:text-amber-300 hover:text-amber-900 dark:hover:text-amber-200 transition-colors"
-                      title={evidenceExpanded ? 'Collapse evidence' : 'Expand evidence'}
-                    >
-                      {evidenceExpanded ? <ChevronDown className="h-3 w-3"/> : <ChevronUp className="h-3 w-3"/>}
-                      {evidenceExpanded ? 'Collapse' : 'Expand'}
-                    </button>
-                  </div>
-                  <ul className={cn(
-                    "space-y-2 overflow-auto overscroll-contain p-3 pr-2 scrollbar-thin",
-                    evidenceExpanded ? "max-h-[60vh] pb-6" : "max-h-28"
-                  )}>
+                <details className="mt-4 border-t border-slate-200 dark:border-slate-700 pt-3">
+                  <summary className="text-xs font-semibold text-slate-600 dark:text-slate-400 cursor-pointer hover:text-slate-800 dark:hover:text-slate-200 mb-2">
+                    📎 View Evidence Sources ({citations.length})
+                  </summary>
+                  <ul className="space-y-2 mt-2 max-h-64 overflow-auto">
                     {citations.map((c, idx) => {
                       const meta = c.source_metadata || {}
                       const id = c.source_chunk_id ?? idx
@@ -901,19 +873,11 @@ export function PatientChartView({ patientId }) {
                       )
                     })}
                   </ul>
-                  {/* Debug: raw citations JSON */}
-                  <details className="m-3 mt-2">
-                    <summary className="text-[11px] text-slate-500 dark:text-slate-400 cursor-pointer hover:text-slate-700 dark:hover:text-slate-300 transition-colors font-medium">
-                      🔍 Debug: View Raw Citations JSON
-                    </summary>
-                    <pre className="mt-2 text-[10px] whitespace-pre-wrap leading-relaxed font-mono bg-slate-900 dark:bg-slate-950 text-green-400 p-3 rounded-md border border-slate-700 max-h-48 overflow-auto">
-                      {JSON.stringify(citations, null, 2)}
-                    </pre>
                   </details>
-                </div>
-              )}
+                )}
               </div>
-            ) : (
+            </div>
+              ) : (
               // Chat Tab Content
               <div className="flex-1 flex flex-col bg-slate-50 dark:bg-slate-900/50 min-h-0">
                 {/* Messages List */}
@@ -1027,51 +991,49 @@ export function PatientChartView({ patientId }) {
               </div>
             )}
             
-            {/* Clinical Notes / Annotations (bottom section) */}
-            <div className="border-t border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-4 flex-shrink-0">
+            {/* Clinical Notes */}
+            <div className="border-t border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900/30 p-3 flex-shrink-0">
               <div className="flex items-center justify-between mb-2">
-                <h3 className="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wide">
-                  Clinical Notes / Annotations
-                </h3>
+                <h4 className="text-xs font-semibold text-slate-600 dark:text-slate-400">
+                  Clinical Notes
+                </h4>
                 {noteSaved && (
-                  <div className="flex items-center gap-2 text-green-600 dark:text-green-400 text-xs font-semibold">
-                    <CheckCircle2 className="h-4 w-4" />
+                  <span className="flex items-center gap-1 text-green-600 dark:text-green-400 text-xs">
+                    <CheckCircle2 className="h-3 w-3" />
                     Saved
-                  </div>
+                  </span>
                 )}
               </div>
               {noteError && (
-                <div className="mb-2 p-2 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded text-[11px] text-red-700 dark:text-red-300 flex items-start gap-2">
-                  <AlertTriangle className="h-4 w-4 flex-shrink-0" />
-                  <span className="leading-relaxed">{noteError}</span>
+                <div className="mb-2 p-2 bg-red-50 dark:bg-red-900/20 border border-red-300 dark:border-red-800 rounded text-xs text-red-700 dark:text-red-300 flex items-start gap-2">
+                  <AlertTriangle className="h-3 w-3 flex-shrink-0 mt-0.5" />
+                  <span>{noteError}</span>
                 </div>
               )}
-              <div className="flex flex-col gap-2">
+              <div className="flex gap-2">
                 <textarea
                   value={noteText}
                   onChange={(e) => setNoteText(e.target.value)}
-                  rows={3}
-                  placeholder="Write a brief clinical note or annotation for this patient..."
-                  className="w-full text-sm px-3 py-2 rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-700 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-400 dark:focus:ring-blue-600 resize-y"
+                  rows={2}
+                  placeholder="Add clinical note..."
+                  className="flex-1 text-xs px-2 py-2 rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-700 dark:text-slate-100 focus:outline-none focus:ring-1 focus:ring-blue-400 resize-none"
                 />
-                <div className="flex items-center justify-end">
-                  <button
-                    onClick={handleSaveNote}
-                    disabled={noteSaving || !noteText.trim()}
-                    className={cn(
-                      "px-4 py-2 text-xs font-bold rounded-lg transition-all duration-200 shadow-md",
-                      noteSaving || !noteText.trim()
-                        ? "bg-slate-300 dark:bg-slate-600 text-slate-500 dark:text-slate-400 cursor-not-allowed"
-                        : "bg-gradient-to-r from-purple-500 to-blue-600 text-white hover:from-purple-600 hover:to-blue-700 hover:shadow-lg hover:scale-105"
-                    )}
-                  >
-                    {noteSaving ? 'Saving…' : 'Save Note'}
-                  </button>
-                </div>
+                <button
+                  onClick={handleSaveNote}
+                  disabled={noteSaving || !noteText.trim()}
+                  className={cn(
+                    "px-3 py-2 text-xs font-medium rounded-md transition-all self-start",
+                    noteSaving || !noteText.trim()
+                      ? "bg-slate-200 dark:bg-slate-700 text-slate-400 cursor-not-allowed"
+                      : "bg-blue-500 text-white hover:bg-blue-600"
+                  )}
+                >
+                  {noteSaving ? 'Saving' : 'Save'}
+                </button>
               </div>
-            </div>
           </div>
-        </Panel>
+        </div>
+      </Panel>
       </PanelGroup>
     </div>
   )
