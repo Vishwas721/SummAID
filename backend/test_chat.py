@@ -92,13 +92,8 @@ def test_another_question(patient_id):
 
 if __name__ == "__main__":
     try:
-        patients = get_patients()
-        if patients:
-            patient_id = patients[0]['patient_id']
-            test_chat()
-            test_another_question(patient_id)
-        else:
-            print("\nNo patients found. Please run: python seed.py")
+        test_chat()
+        test_another_question()
     except requests.exceptions.ConnectionError:
         print("Error: Could not connect to backend. Make sure the server is running:")
         print("  cd backend && uvicorn main:app --reload")
