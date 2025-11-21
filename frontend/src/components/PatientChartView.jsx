@@ -5,7 +5,7 @@ import { Document, Page, pdfjs } from 'react-pdf'
 import 'react-pdf/dist/Page/AnnotationLayer.css'
 import 'react-pdf/dist/Page/TextLayer.css'
 import { PanelGroup, Panel, PanelResizeHandle } from 'react-resizable-panels'
-import { FileText, Sparkles, AlertTriangle, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Loader2, Eye, EyeOff, MessageSquare, Send } from 'lucide-react'
+import { FileText, Sparkles, AlertTriangle, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Loader2, Eye, EyeOff, MessageSquare, Send, CheckCircle2 } from 'lucide-react'
 import { cn } from '../lib/utils'
 
 // Configure PDF.js worker - use local build from node_modules
@@ -33,6 +33,10 @@ export function PatientChartView({ patientId }) {
   const [evidenceExpanded, setEvidenceExpanded] = useState(false)
   const [chiefComplaint, setChiefComplaint] = useState('')
   
+  // Role-based state
+  const [userRole, setUserRole] = useState(localStorage.getItem('user_role') || 'DOCTOR')
+  const [chartPrepared, setChartPrepared] = useState(false)
+  
   // Chat state
   const [activeTab, setActiveTab] = useState('summary') // 'summary' or 'chat'
   const [messages, setMessages] = useState([]) // {role: 'user'|'ai', content: string, citations?: []}
@@ -52,6 +56,12 @@ export function PatientChartView({ patientId }) {
     setChatInput('')
     setChatError(null)
     setActiveTab('summary')
+    setChartPrepared(false)
+    
+    // Auto-load summary for Doctor when patient changes
+    if (userRole === 'DOCTOR' && patientId) {
+      handleGenerate()
+    }
   }, [patientId])
 
   // Fetch reports when patientId changes
@@ -101,9 +111,15 @@ export function PatientChartView({ patientId }) {
       const data = response.data
       setSummary(data.summary_text || '(No summary returned)')
       setCitations(Array.isArray(data.citations) ? data.citations : [])
+      
+      // Set success state for MA
+      if (userRole === 'MA') {
+        setChartPrepared(true)
+      }
     } catch (e) {
       console.error('Generate summary error', e)
       setError(e.response?.data?.detail || e.message || 'Unknown error')
+      setChartPrepared(false)
     } finally {
       setGenerating(false)
     }
@@ -345,6 +361,124 @@ export function PatientChartView({ patientId }) {
     ? `${import.meta.env.VITE_API_URL}/report-file/${selectedReportId}`
     : null
 
+  // MA View - Simplified
+  if (userRole === 'MA') {
+    return (
+      <div className="h-full w-full bg-gradient-to-br from-slate-50 via-white to-blue-50 dark:from-slate-900 dark:via-slate-800 dark:to-blue-900">
+        <div className="h-full flex items-center justify-center p-8">
+          <div className="w-full max-w-2xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl shadow-2xl p-8">
+            <div className="text-center mb-8">
+              <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-gradient-to-br from-purple-500 to-blue-600 mb-4">
+                <FileText className="h-8 w-8 text-white" />
+              </div>
+              <h2 className="text-2xl font-bold text-slate-800 dark:text-slate-100 mb-2">
+                Prepare Patient Chart
+              </h2>
+              <p className="text-sm text-slate-600 dark:text-slate-400">
+                Patient ID: <span className="font-semibold text-blue-600 dark:text-blue-400">{patientId}</span>
+              </p>
+            </div>
+
+            {/* Reports List (Read-only for MA) */}
+            {loadingReports ? (
+              <div className="flex items-center justify-center gap-2 text-sm text-slate-500 dark:text-slate-400 mb-6">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                <span>Loading reports...</span>
+              </div>
+            ) : reports.length > 0 ? (
+              <div className="mb-6">
+                <p className="text-xs font-semibold text-slate-600 dark:text-slate-400 mb-2">
+                  Available Reports ({reports.length}):
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  {reports.map(r => (
+                    <div
+                      key={r.report_id}
+                      className="text-xs px-3 py-1.5 rounded-lg border border-slate-300 dark:border-slate-600 bg-slate-50 dark:bg-slate-700 text-slate-700 dark:text-slate-300"
+                    >
+                      {r.filename}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <div className="mb-6 p-4 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg">
+                <p className="text-sm text-amber-700 dark:text-amber-300">No reports found for this patient</p>
+              </div>
+            )}
+
+            {/* Chief Complaint Input */}
+            <div className="mb-6">
+              <label className="block text-sm font-semibold text-slate-700 dark:text-slate-300 mb-2">
+                Visit Reason / Chief Complaint
+              </label>
+              <input
+                type="text"
+                value={chiefComplaint}
+                onChange={(e) => setChiefComplaint(e.target.value)}
+                placeholder="e.g., Worsening headaches, chest pain, fever"
+                className="w-full text-sm px-4 py-3 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-700 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-400 dark:focus:ring-blue-600"
+              />
+            </div>
+
+            {/* Error Display */}
+            {error && (
+              <div className="mb-6 p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg">
+                <div className="flex items-start gap-2">
+                  <AlertTriangle className="h-5 w-5 text-red-600 dark:text-red-400 flex-shrink-0 mt-0.5" />
+                  <div>
+                    <p className="text-sm font-semibold text-red-700 dark:text-red-300">Error</p>
+                    <p className="text-xs text-red-600 dark:text-red-400 mt-1">{error}</p>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Success State */}
+            {chartPrepared && !generating && !error && (
+              <div className="mb-6 p-6 bg-green-50 dark:bg-green-900/20 border-2 border-green-300 dark:border-green-700 rounded-lg">
+                <div className="flex flex-col items-center gap-3">
+                  <CheckCircle2 className="h-16 w-16 text-green-600 dark:text-green-400" />
+                  <div className="text-center">
+                    <p className="text-lg font-bold text-green-700 dark:text-green-300">Chart Prepared Successfully!</p>
+                    <p className="text-sm text-green-600 dark:text-green-400 mt-1">
+                      The summary has been generated and is ready for the doctor to review.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Prepare Button */}
+            <button
+              onClick={handleGenerate}
+              disabled={generating || !reports.length}
+              className={cn(
+                "w-full py-4 text-base font-bold rounded-lg transition-all duration-200 shadow-lg flex items-center justify-center gap-3",
+                generating || !reports.length
+                  ? "bg-slate-300 dark:bg-slate-600 text-slate-500 dark:text-slate-400 cursor-not-allowed"
+                  : "bg-gradient-to-r from-purple-500 to-blue-600 text-white hover:from-purple-600 hover:to-blue-700 hover:shadow-xl hover:scale-105"
+              )}
+            >
+              {generating ? (
+                <>
+                  <Loader2 className="h-5 w-5 animate-spin" />
+                  Preparing Chart...
+                </>
+              ) : (
+                <>
+                  <Sparkles className="h-5 w-5" />
+                  Prepare Patient Chart
+                </>
+              )}
+            </button>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  // Doctor View - Full UI
   return (
     <div className="h-full w-full bg-gradient-to-br from-slate-50 via-white to-blue-50 dark:from-slate-900 dark:via-slate-800 dark:to-blue-900">
       <PanelGroup direction="horizontal" className="h-full">
