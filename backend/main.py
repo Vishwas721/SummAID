@@ -117,6 +117,16 @@ class ChatRequest(BaseModel):
     max_chunks: int = Field(default=15, ge=1, le=50, description="Maximum number of chunks to retrieve")
     max_context_chars: int = Field(default=12000, ge=500, le=60000, description="Max characters of context sent to model")
 
+class AnnotationRequest(BaseModel):
+    patient_id: int = Field(..., description="Patient ID for the annotation")
+    doctor_note: str = Field(..., description="Doctor's note/annotation text")
+
+class AnnotationResponse(BaseModel):
+    annotation_id: int
+    patient_id: int
+    doctor_note: str
+    created_at: str
+
 def _embed_text(text: str) -> List[float]:
     """Call local Ollama embed endpoint and return embedding (list of floats)."""
     try:
@@ -624,3 +634,95 @@ async def chat_with_patient(
     except Exception as e:
         logger.exception(f"Chat error for patient_id {patient_id}")
         raise HTTPException(status_code=500, detail=f"Chat error: {e}")
+
+
+# ---------- Annotations Endpoints ----------
+@app.post("/annotate", response_model=AnnotationResponse)
+def create_annotation(payload: AnnotationRequest):
+    """
+    Save a doctor's note/annotation for a specific patient.
+    """
+    conn = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        
+        # Verify patient exists
+        cur.execute("SELECT patient_id FROM patients WHERE patient_id = %s", (payload.patient_id,))
+        if not cur.fetchone():
+            raise HTTPException(status_code=404, detail=f"Patient {payload.patient_id} not found")
+        
+        # Insert annotation
+        cur.execute(
+            """
+            INSERT INTO annotations (patient_id, doctor_note, created_at)
+            VALUES (%s, %s, CURRENT_TIMESTAMP)
+            RETURNING annotation_id, patient_id, doctor_note, created_at
+            """,
+            (payload.patient_id, payload.doctor_note)
+        )
+        row = cur.fetchone()
+        conn.commit()
+        
+        return AnnotationResponse(
+            annotation_id=row[0],
+            patient_id=row[1],
+            doctor_note=row[2],
+            created_at=row[3].isoformat()
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        logger.exception(f"Error creating annotation for patient {payload.patient_id}")
+        raise HTTPException(status_code=500, detail=f"Annotation creation error: {e}")
+    finally:
+        if conn:
+            conn.close()
+
+
+@app.get("/annotations/{patient_id}", response_model=List[AnnotationResponse])
+def get_annotations(patient_id: int = Path(..., description="Patient ID to fetch annotations for")):
+    """
+    Fetch all annotations/doctor notes for a specific patient, ordered by most recent first.
+    """
+    conn = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        
+        # Verify patient exists
+        cur.execute("SELECT patient_id FROM patients WHERE patient_id = %s", (patient_id,))
+        if not cur.fetchone():
+            raise HTTPException(status_code=404, detail=f"Patient {patient_id} not found")
+        
+        # Fetch all annotations for this patient
+        cur.execute(
+            """
+            SELECT annotation_id, patient_id, doctor_note, created_at
+            FROM annotations
+            WHERE patient_id = %s
+            ORDER BY created_at DESC
+            """,
+            (patient_id,)
+        )
+        rows = cur.fetchall()
+        
+        return [
+            AnnotationResponse(
+                annotation_id=row[0],
+                patient_id=row[1],
+                doctor_note=row[2],
+                created_at=row[3].isoformat()
+            )
+            for row in rows
+        ]
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"Error fetching annotations for patient {patient_id}")
+        raise HTTPException(status_code=500, detail=f"Annotation fetch error: {e}")
+    finally:
+        if conn:
+            conn.close()
