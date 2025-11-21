@@ -43,6 +43,12 @@ export function PatientChartView({ patientId }) {
   const [chatInput, setChatInput] = useState('')
   const [chatLoading, setChatLoading] = useState(false)
   const [chatError, setChatError] = useState(null)
+  
+  // Annotations state (Doctor view)
+  const [noteText, setNoteText] = useState('')
+  const [noteSaving, setNoteSaving] = useState(false)
+  const [noteError, setNoteError] = useState(null)
+  const [noteSaved, setNoteSaved] = useState(false)
 
   // Reset summary and citations when patient changes
   useEffect(() => {
@@ -57,6 +63,9 @@ export function PatientChartView({ patientId }) {
     setChatError(null)
     setActiveTab('summary')
     setChartPrepared(false)
+    setNoteText('')
+    setNoteError(null)
+    setNoteSaved(false)
     
     // Auto-load summary for Doctor when patient changes
     if (userRole === 'DOCTOR' && patientId) {
@@ -122,6 +131,31 @@ export function PatientChartView({ patientId }) {
       setChartPrepared(false)
     } finally {
       setGenerating(false)
+    }
+  }
+
+  const handleSaveNote = async () => {
+    if (!patientId || !noteText.trim() || noteSaving) return
+    setNoteSaving(true)
+    setNoteError(null)
+    setNoteSaved(false)
+    try {
+      const url = `${import.meta.env.VITE_API_URL}/annotate`
+      const response = await axios.post(url, {
+        patient_id: patientId,
+        doctor_note: noteText.trim()
+      })
+      if (response && response.data) {
+        setNoteSaved(true)
+        setNoteText('')
+        // Auto-hide success after a short delay
+        setTimeout(() => setNoteSaved(false), 2500)
+      }
+    } catch (e) {
+      console.error('Save annotation error', e)
+      setNoteError(e.response?.data?.detail || e.message || 'Failed to save note')
+    } finally {
+      setNoteSaving(false)
     }
   }
 
@@ -992,6 +1026,50 @@ export function PatientChartView({ patientId }) {
                 </div>
               </div>
             )}
+            
+            {/* Clinical Notes / Annotations (bottom section) */}
+            <div className="border-t border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-4 flex-shrink-0">
+              <div className="flex items-center justify-between mb-2">
+                <h3 className="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wide">
+                  Clinical Notes / Annotations
+                </h3>
+                {noteSaved && (
+                  <div className="flex items-center gap-2 text-green-600 dark:text-green-400 text-xs font-semibold">
+                    <CheckCircle2 className="h-4 w-4" />
+                    Saved
+                  </div>
+                )}
+              </div>
+              {noteError && (
+                <div className="mb-2 p-2 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded text-[11px] text-red-700 dark:text-red-300 flex items-start gap-2">
+                  <AlertTriangle className="h-4 w-4 flex-shrink-0" />
+                  <span className="leading-relaxed">{noteError}</span>
+                </div>
+              )}
+              <div className="flex flex-col gap-2">
+                <textarea
+                  value={noteText}
+                  onChange={(e) => setNoteText(e.target.value)}
+                  rows={3}
+                  placeholder="Write a brief clinical note or annotation for this patient..."
+                  className="w-full text-sm px-3 py-2 rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-700 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-400 dark:focus:ring-blue-600 resize-y"
+                />
+                <div className="flex items-center justify-end">
+                  <button
+                    onClick={handleSaveNote}
+                    disabled={noteSaving || !noteText.trim()}
+                    className={cn(
+                      "px-4 py-2 text-xs font-bold rounded-lg transition-all duration-200 shadow-md",
+                      noteSaving || !noteText.trim()
+                        ? "bg-slate-300 dark:bg-slate-600 text-slate-500 dark:text-slate-400 cursor-not-allowed"
+                        : "bg-gradient-to-r from-purple-500 to-blue-600 text-white hover:from-purple-600 hover:to-blue-700 hover:shadow-lg hover:scale-105"
+                    )}
+                  >
+                    {noteSaving ? 'Saving…' : 'Save Note'}
+                  </button>
+                </div>
+              </div>
+            </div>
           </div>
         </Panel>
       </PanelGroup>
