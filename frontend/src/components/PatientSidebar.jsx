@@ -15,7 +15,11 @@ export function PatientSidebar({ selectedPatientId, onSelectPatient }) {
       try {
         setLoading(true)
         setError(null)
-        const response = await axios.get(`${import.meta.env.VITE_API_URL}/patients`)
+        const role = localStorage.getItem('user_role') || 'DOCTOR'
+        const endpoint = role === 'DOCTOR'
+          ? `${import.meta.env.VITE_API_URL}/patients/doctor`
+          : `${import.meta.env.VITE_API_URL}/patients`
+        const response = await axios.get(endpoint)
         setPatients(response.data)
       } catch (err) {
         console.error('Failed to fetch patients:', err)
@@ -24,13 +28,12 @@ export function PatientSidebar({ selectedPatientId, onSelectPatient }) {
         setLoading(false)
       }
     }
-
     fetchPatients()
   }, [])
 
   const filteredPatients = patients.filter(patient => {
-    const name = patient.patient_display_name?.toLowerCase() || ''
-    const id = patient.patient_id?.toString() || ''
+    const name = (patient.patient_display_name || '').toLowerCase()
+    const id = (patient.patient_id || '').toString()
     const search = searchTerm.toLowerCase()
     return name.includes(search) || id.includes(search)
   })
@@ -163,6 +166,16 @@ export function PatientSidebar({ selectedPatientId, onSelectPatient }) {
                       )}>
                         ID: {patientId}
                       </span>
+                      {localStorage.getItem('user_role') === 'DOCTOR' && patient.prepared_at && (
+                        <span className={cn(
+                          "text-xs px-2 py-0.5 rounded-full font-medium",
+                          isSelected
+                            ? "bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-300"
+                            : "bg-green-50 dark:bg-green-800/40 text-green-600 dark:text-green-300"
+                        )} title={`Prepared at ${new Date(patient.prepared_at).toLocaleString()}`}>
+                          Prep {new Date(patient.prepared_at).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'})}
+                        </span>
+                      )}
                     </div>
                     
                     {isSelected && (

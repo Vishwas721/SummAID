@@ -3,7 +3,7 @@ import json
 import logging
 import unicodedata
 from typing import List, Optional, Tuple
-from fastapi import FastAPI, HTTPException, Body, Path
+from fastapi import FastAPI, HTTPException, Body, Path, Request
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 from database import get_db_connection
@@ -50,6 +50,46 @@ app = FastAPI(
     description="Backend for the v3-lite Canned Demo",
     version="0.1.0"
 )
+
+# --- Ensure late-added schema objects exist (idempotent) ---
+def ensure_summary_support():
+    """Create patient_summaries table and chart_prepared_at column if they do not exist.
+    Safe to call multiple times; used opportunistically before summary operations.
+    """
+    conn = None
+    try:
+        conn = get_db_connection(); cur = conn.cursor()
+        # Add chart_prepared_at column if missing
+        try:
+            cur.execute("ALTER TABLE patients ADD COLUMN IF NOT EXISTS chart_prepared_at TIMESTAMP NULL")
+        except Exception as e:
+            logger.warning(f"chart_prepared_at alter warning: {e}")
+        # Create patient_summaries table if missing
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS patient_summaries (
+              patient_id INTEGER PRIMARY KEY REFERENCES patients(patient_id) ON DELETE CASCADE,
+              summary_text TEXT NOT NULL,
+              patient_type TEXT NOT NULL,
+              chief_complaint TEXT NULL,
+              citations JSONB NOT NULL DEFAULT '[]'::jsonb,
+              generated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        # Index for retrieval ordering if needed
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_patient_summaries_generated_at ON patient_summaries(generated_at DESC)")
+        conn.commit(); cur.close(); conn.close()
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        logger.warning(f"ensure_summary_support error (non-fatal): {e}")
+    finally:
+        if conn:
+            conn.close()
+
+@app.on_event("startup")
+def _startup_init():
+    # Best-effort schema ensure so first request doesn't race
+    ensure_summary_support()
 
 # Add CORS middleware
 app.add_middleware(
@@ -332,6 +372,7 @@ def _normalize_text(s: str) -> str:
 
 @app.post("/summarize/{patient_id}")
 async def summarize_patient(
+    request: Request,
     patient_id: int = Path(..., description="The numeric patient_id to summarize"),
     payload: SummarizeRequest = Body(default=SummarizeRequest())
 ):
@@ -345,6 +386,10 @@ async def summarize_patient(
     - Return summary + citations (unchanged shape)
     """
     try:
+        # Guard: only Medical Assistant role may generate summaries
+        role = request.headers.get('X-User-Role') or request.headers.get('x-user-role') or ''
+        if role.upper() == 'DOCTOR':
+            raise HTTPException(status_code=403, detail="Doctors cannot generate summaries; use /summary/{patient_id}")
         # 1. Resolve display label & fetch report_ids
         conn = get_db_connection(); cur = conn.cursor()
         cur.execute("SELECT patient_display_name, patient_demo_id FROM patients WHERE patient_id=%s", (patient_id,))
@@ -496,6 +541,8 @@ async def summarize_patient(
                 "source_full_text": norm_full,
                 "source_metadata": enriched_meta
             })
+        # Ensure schema support (table/column) before persist
+        ensure_summary_support()
         # 7. Persist summary & mark chart prepared
         try:
             conn2 = get_db_connection(); cur2 = conn2.cursor()
@@ -785,6 +832,7 @@ def fetch_patient_summary(patient_id: int = Path(..., description="Patient ID to
     """Return persisted summary & citations if chart prepared; 404 if not available."""
     conn = None
     try:
+        ensure_summary_support()
         conn = get_db_connection(); cur = conn.cursor()
         cur.execute("SELECT summary_text, patient_type, chief_complaint, citations, generated_at FROM patient_summaries WHERE patient_id=%s", (patient_id,))
         row = cur.fetchone()
@@ -804,7 +852,39 @@ def fetch_patient_summary(patient_id: int = Path(..., description="Patient ID to
         raise
     except Exception as e:
         logger.exception(f"Fetch summary error patient_id={patient_id}")
+        # If table truly missing and creation failed, treat as not prepared
+        if 'patient_summaries' in str(e).lower():
+            raise HTTPException(status_code=404, detail="Summary not prepared")
         raise HTTPException(status_code=500, detail=f"Summary fetch error: {e}")
+    finally:
+        if conn:
+            conn.close()
+
+@app.get("/patients/doctor")
+async def get_doctor_patients():
+    """Return only patients whose chart has been prepared (summary exists)."""
+    conn = None
+    try:
+        ensure_summary_support()
+        conn = get_db_connection(); cur = conn.cursor()
+        cur.execute("""
+            SELECT p.patient_id, p.patient_display_name, ps.generated_at
+            FROM patients p
+            JOIN patient_summaries ps ON ps.patient_id = p.patient_id
+            ORDER BY ps.generated_at DESC
+        """)
+        rows = cur.fetchall()
+        cur.close(); conn.close()
+        return [
+            {
+                "patient_id": r[0],
+                "patient_display_name": r[1],
+                "prepared_at": r[2].isoformat() if hasattr(r[2], 'isoformat') else str(r[2])
+            } for r in rows
+        ]
+    except Exception as e:
+        logger.exception("Doctor patients fetch error")
+        raise HTTPException(status_code=500, detail=f"Doctor patients fetch error: {e}")
     finally:
         if conn:
             conn.close()

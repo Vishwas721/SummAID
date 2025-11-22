@@ -628,9 +628,32 @@ export function PatientChartView({ patientId }) {
     console.error('Page render error:', error)
   }, [])
 
-  const pdfUrl = selectedReportId 
-    ? `${import.meta.env.VITE_API_URL}/report-file/${selectedReportId}`
-    : null
+  // Lazy PDF URL: only resolve when a report is selected
+  const pdfUrl = selectedReportId ? `${import.meta.env.VITE_API_URL}/report-file/${selectedReportId}` : null
+
+  // Simple page render cache (data URLs) to avoid re-rendering already visited pages
+  const pageCacheRef = useRef(new Map())
+  const [pageImage, setPageImage] = useState(null)
+
+  const capturePageCanvas = () => {
+    const canvases = document.querySelectorAll('.react-pdf__Page canvas')
+    if (canvases && canvases[0]) {
+      try {
+        const dataUrl = canvases[0].toDataURL('image/png')
+        pageCacheRef.current.set(pageNumber, dataUrl)
+        setPageImage(dataUrl)
+      } catch {}
+    }
+  }
+
+  useEffect(() => {
+    // If cached, use image immediately
+    if (pageCacheRef.current.has(pageNumber)) {
+      setPageImage(pageCacheRef.current.get(pageNumber))
+    } else {
+      setPageImage(null)
+    }
+  }, [pageNumber, selectedReportId])
 
   // MA View - Simplified
   if (userRole === 'MA') {
@@ -811,33 +834,38 @@ export function PatientChartView({ patientId }) {
             {pdfUrl ? (
               <div className="flex flex-col items-center gap-4">
                 <div className="shadow-2xl rounded-lg overflow-hidden border-4 border-white dark:border-slate-700">
-                  <Document
-                    file={pdfUrl}
-                    onLoadSuccess={onDocumentLoadSuccess}
-                    onLoadError={onDocumentLoadError}
-                    loading={
-                      <div className="flex items-center gap-2 p-12 text-sm text-slate-500 dark:text-slate-400">
-                        <Loader2 className="h-5 w-5 animate-spin" />
-                        Loading PDF...
-                      </div>
-                    }
-                  >
-                    <Page 
-                      pageNumber={pageNumber} 
-                      renderTextLayer={true} 
-                      renderAnnotationLayer={true}
-                      onRenderError={onPageRenderError}
-                      customTextRenderer={({ str }) => {
-                        if (!activeCitationText) return str
-                        const lower = str.toLowerCase()
-                        const trimmed = lower.trim()
-                        if (trimmed.length > 2 && activeCitationText.includes(trimmed)) {
-                          return `<mark style="background:rgba(250, 204, 21, 0.4);padding:2px 4px;border-radius:2px;border-bottom:2px solid rgba(251, 191, 36, 0.8);color:inherit;font-weight:inherit;">${str}</mark>`
-                        }
-                        return str
-                      }}
-                    />
-                  </Document>
+                  {pageImage ? (
+                    <img src={pageImage} alt={`Page ${pageNumber}`} className="block max-w-full h-auto" />
+                  ) : (
+                    <Document
+                      file={pdfUrl}
+                      onLoadSuccess={onDocumentLoadSuccess}
+                      onLoadError={onDocumentLoadError}
+                      loading={
+                        <div className="flex items-center gap-2 p-12 text-sm text-slate-500 dark:text-slate-400">
+                          <Loader2 className="h-5 w-5 animate-spin" />
+                          Loading PDF...
+                        </div>
+                      }
+                    >
+                      <Page
+                        pageNumber={pageNumber}
+                        renderTextLayer={true}
+                        renderAnnotationLayer={true}
+                        onRenderError={onPageRenderError}
+                        onRenderSuccess={capturePageCanvas}
+                        customTextRenderer={({ str }) => {
+                          if (!activeCitationText) return str
+                          const lower = str.toLowerCase()
+                          const trimmed = lower.trim()
+                          if (trimmed.length > 2 && activeCitationText.includes(trimmed)) {
+                            return `<mark style="background:rgba(250, 204, 21, 0.4);padding:2px 4px;border-radius:2px;border-bottom:2px solid rgba(251, 191, 36, 0.8);color:inherit;font-weight:inherit;">${str}</mark>`
+                          }
+                          return str
+                        }}
+                      />
+                    </Document>
+                  )}
                 </div>
                 {numPages && (
                   <div className="flex items-center gap-3 bg-white dark:bg-slate-800 px-4 py-2 rounded-full shadow-lg border border-slate-200 dark:border-slate-700">
