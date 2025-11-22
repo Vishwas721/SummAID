@@ -137,6 +137,15 @@ class AnnotationResponse(BaseModel):
     selected_text: Optional[str] = None
     created_at: str
 
+class SafetyCheckRequest(BaseModel):
+    drug_name: str = Field(..., description="Name of the drug to check for allergies")
+
+class SafetyCheckResponse(BaseModel):
+    has_allergy: bool = Field(..., description="Whether an allergy was detected")
+    warnings: List[str] = Field(default_factory=list, description="List of specific warnings")
+    allergy_details: Optional[str] = Field(default=None, description="Detailed allergy information")
+    citations: List[dict] = Field(default_factory=list, description="Report chunks containing allergy information")
+
 def _embed_text(text: str) -> List[float]:
     """Call local Ollama embed endpoint and return embedding (list of floats)."""
     try:
@@ -748,7 +757,210 @@ def get_annotations(patient_id: int = Path(..., description="Patient ID to fetch
         raise
     except Exception as e:
         logger.exception(f"Error fetching annotations for patient {patient_id}")
-        raise HTTPException(status_code=500, detail=f"Annotation fetch error: {e}")
+        raise HTTPException(status_code=500, detail=f"Annotation retrieval error: {e}")
     finally:
         if conn:
             conn.close()
+
+
+@app.post("/safety-check/{patient_id}", response_model=SafetyCheckResponse)
+async def safety_check(
+    patient_id: int = Path(..., description="Patient ID to check for allergies"),
+    payload: SafetyCheckRequest = Body(...)
+):
+    """
+    Check for drug allergies by searching patient's medical history using RAG.
+    
+    Uses hybrid search to find:
+    - Allergy-related information in patient reports
+    - Mentions of the specific drug or drug class
+    - Known allergic reactions or sensitivities
+    
+    Returns warnings if potential allergies are detected.
+    """
+    try:
+        # 1. Resolve patient and get report_ids
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT patient_display_name, patient_demo_id FROM patients WHERE patient_id=%s", (patient_id,))
+        prow = cur.fetchone()
+        if not prow:
+            cur.close()
+            conn.close()
+            raise HTTPException(status_code=404, detail=f"Patient {patient_id} not found")
+        display_name, patient_demo_id = prow[0], prow[1]
+        label = display_name or patient_demo_id or str(patient_id)
+
+        cur.execute("SELECT report_id FROM reports WHERE patient_id=%s ORDER BY report_id", (patient_id,))
+        report_rows = cur.fetchall()
+        report_ids = [r[0] for r in report_rows]
+        if not report_ids:
+            cur.close()
+            conn.close()
+            # No reports = no documented allergies
+            return SafetyCheckResponse(
+                has_allergy=False,
+                warnings=[],
+                allergy_details=None,
+                citations=[]
+            )
+
+        # 2. Build search query focused on allergies + drug name
+        drug_name = payload.drug_name.strip()
+        search_query = f"allergy allergies allergic reaction {drug_name}"
+        
+        query_embedding = _embed_text(search_query)
+        if len(query_embedding) != 768:
+            raise HTTPException(status_code=500, detail=f"Embedding dimension {len(query_embedding)} != 768")
+        embedding_literal = '[' + ','.join(f'{x:.6f}' for x in query_embedding) + ']'
+
+        # 3. Hybrid retrieval: keyword + similarity search for allergy-related content
+        placeholders = ','.join(['%s'] * len(report_ids))
+        
+        # 3a. Keyword search for allergy mentions
+        allergy_keywords = ['allergy', 'allergies', 'allergic', 'hypersensitivity', 'adverse reaction']
+        patterns = [f"%{kw}%" for kw in allergy_keywords]
+        ors = " OR ".join([f"pgp_sym_decrypt(c.chunk_text_encrypted, %s)::text ILIKE %s" for _ in patterns])
+        params: List[str] = []
+        for ptn in patterns:
+            params.extend([ENCRYPTION_KEY, ptn])
+        
+        keyword_sql = f"""
+            SELECT DISTINCT c.chunk_id,
+                   c.report_id,
+                   pgp_sym_decrypt(c.chunk_text_encrypted, %s)::text AS chunk_text,
+                   c.source_metadata
+            FROM report_chunks c
+            WHERE c.report_id IN ({placeholders})
+            AND ({ors})
+            LIMIT 10
+        """
+        cur.execute(keyword_sql, [ENCRYPTION_KEY, *report_ids, *params])
+        keyword_chunks = []
+        for row in cur.fetchall():
+            if row and row[2]:
+                keyword_chunks.append((row[0], row[1], row[2], row[3]))
+        
+        # 3b. Similarity search with allergy-focused query
+        similarity_sql = f"""
+            WITH q AS (SELECT %s::vector(768) AS qv)
+            SELECT c.chunk_id,
+                   c.report_id,
+                   pgp_sym_decrypt(c.chunk_text_encrypted, %s)::text AS chunk_text,
+                   c.source_metadata,
+                   (c.report_vector <=> q.qv) AS distance
+            FROM report_chunks c, q
+            WHERE c.report_id IN ({placeholders})
+            ORDER BY c.report_vector <=> q.qv
+            LIMIT 5
+        """
+        cur.execute(similarity_sql, (embedding_literal, ENCRYPTION_KEY, *report_ids))
+        similarity_chunks = []
+        for row in cur.fetchall():
+            if row and row[2]:
+                similarity_chunks.append((row[0], row[1], row[2], row[3]))
+        
+        # 3c. Also search clinical annotations for allergy mentions
+        cur.execute(
+            """
+            SELECT annotation_id, doctor_note, created_at
+            FROM annotations
+            WHERE patient_id = %s
+            AND (doctor_note ILIKE %s OR doctor_note ILIKE %s OR doctor_note ILIKE %s)
+            ORDER BY created_at DESC
+            """,
+            (patient_id, '%allerg%', '%hypersensitiv%', '%adverse reaction%')
+        )
+        annotation_rows = cur.fetchall()
+        
+        # 4. Combine and deduplicate chunks
+        seen_chunk_ids = set()
+        all_chunks = []
+        for chunk_tuple in (keyword_chunks + similarity_chunks):
+            chunk_id = chunk_tuple[0]
+            if chunk_id not in seen_chunk_ids:
+                seen_chunk_ids.add(chunk_id)
+                all_chunks.append(chunk_tuple)
+        
+        cur.close()
+        conn.close()
+        
+        if not all_chunks and not annotation_rows:
+            # No allergy information found
+            return SafetyCheckResponse(
+                has_allergy=False,
+                warnings=[],
+                allergy_details=None,
+                citations=[]
+            )
+        
+        # 5. Analyze chunks for drug-specific allergies
+        drug_lower = drug_name.lower()
+        has_allergy = False
+        warnings = []
+        allergy_details_parts = []
+        citations = []
+        
+        # 5a. Check annotations first (most recent clinical notes)
+        for annotation_id, doctor_note, created_at in annotation_rows:
+            note_lower = doctor_note.lower()
+            
+            # Check if annotation mentions the specific drug
+            if drug_lower in note_lower:
+                has_allergy = True
+                warnings.append(f"⚠️ Clinical note mentions {drug_name} allergy")
+                allergy_details_parts.append(doctor_note)
+                
+                citations.append({
+                    "annotation_id": annotation_id,
+                    "text": doctor_note[:200] + ('...' if len(doctor_note) > 200 else ''),
+                    "source": "Clinical Annotation",
+                    "date": created_at.isoformat() if hasattr(created_at, 'isoformat') else str(created_at)
+                })
+        
+        # 5b. Check report chunks
+        for chunk_id, report_id, chunk_text, metadata in all_chunks:
+            chunk_lower = chunk_text.lower()
+            
+            # Check if this chunk mentions the specific drug
+            if drug_lower in chunk_lower:
+                # Drug mentioned in allergy-related context
+                has_allergy = True
+                warnings.append(f"Patient has documented information about {drug_name} in medical history")
+                
+                # Extract relevant lines
+                lines = chunk_text.split('\n')
+                for line in lines:
+                    if drug_lower in line.lower() and any(kw in line.lower() for kw in allergy_keywords):
+                        allergy_details_parts.append(line.strip())
+            
+            # Check for general allergy keywords
+            if any(kw in chunk_lower for kw in allergy_keywords):
+                # Build citation
+                citations.append({
+                    "chunk_id": chunk_id,
+                    "report_id": report_id,
+                    "text": chunk_text[:200] + ('...' if len(chunk_text) > 200 else ''),
+                    "metadata": metadata
+                })
+        
+        # 6. Compile response
+        allergy_details = ' | '.join(allergy_details_parts) if allergy_details_parts else None
+        
+        if not allergy_details and citations:
+            # Found allergy mentions but not specifically about this drug
+            allergy_details = "Allergy history found in patient records. Please review citations for details."
+            warnings.append("Patient has documented allergies in medical history - review before prescribing")
+        
+        return SafetyCheckResponse(
+            has_allergy=has_allergy or len(warnings) > 0,
+            warnings=warnings,
+            allergy_details=allergy_details,
+            citations=citations
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"Error in safety check for patient {patient_id}")
+        raise HTTPException(status_code=500, detail=f"Safety check error: {e}")

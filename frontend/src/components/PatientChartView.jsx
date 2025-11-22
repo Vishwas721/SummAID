@@ -39,11 +39,20 @@ export function PatientChartView({ patientId }) {
   const [chartPrepared, setChartPrepared] = useState(false)
   
   // Chat state
-  const [activeTab, setActiveTab] = useState('summary') // 'summary' or 'chat'
+  const [activeTab, setActiveTab] = useState('summary') // 'summary', 'chat', or 'rx'
   const [messages, setMessages] = useState([]) // {role: 'user'|'ai', content: string, citations?: []}
   const [chatInput, setChatInput] = useState('')
   const [chatLoading, setChatLoading] = useState(false)
   const [chatError, setChatError] = useState(null)
+  
+  // Prescription (Rx) state
+  const [drugName, setDrugName] = useState('')
+  const [dosage, setDosage] = useState('')
+  const [frequency, setFrequency] = useState('')
+  const [duration, setDuration] = useState('')
+  const [safetyCheckLoading, setSafetyCheckLoading] = useState(false)
+  const [safetyWarning, setSafetyWarning] = useState(null)
+  const [safetyCheckDone, setSafetyCheckDone] = useState(false)
   
   // Annotations state (Doctor view)
   const [noteText, setNoteText] = useState('')
@@ -248,6 +257,112 @@ export function PatientChartView({ patientId }) {
     } finally {
       setNoteSaving(false)
     }
+  }
+
+  // Handle safety check for prescription
+  const handleSafetyCheck = async () => {
+    if (!patientId || !drugName.trim()) return
+    
+    setSafetyCheckLoading(true)
+    setSafetyWarning(null)
+    setSafetyCheckDone(false)
+    
+    try {
+      const url = `${import.meta.env.VITE_API_URL}/safety-check/${encodeURIComponent(patientId)}`
+      const response = await axios.post(url, {
+        drug_name: drugName.trim()
+      })
+      const data = response.data
+      
+      setSafetyCheckDone(true)
+      if (data.has_allergy || data.warnings?.length > 0) {
+        setSafetyWarning({
+          hasAllergy: data.has_allergy,
+          warnings: data.warnings || [],
+          allergyDetails: data.allergy_details || ''
+        })
+      }
+    } catch (e) {
+      console.error('Safety check error', e)
+      setSafetyWarning({
+        hasAllergy: false,
+        warnings: ['Safety check failed: ' + (e.response?.data?.detail || e.message)],
+        allergyDetails: ''
+      })
+    } finally {
+      setSafetyCheckLoading(false)
+    }
+  }
+
+  // Generate prescription PDF
+  const handlePrintPrescription = () => {
+    if (!drugName.trim()) return
+    
+    const doc = new jsPDF()
+    const margin = 20
+    let y = margin
+    
+    // Header
+    doc.setFontSize(18)
+    doc.setFont(undefined, 'bold')
+    doc.text('PRESCRIPTION', 105, y, { align: 'center' })
+    y += 15
+    
+    // Patient info
+    doc.setFontSize(11)
+    doc.setFont(undefined, 'normal')
+    doc.text(`Patient: ${reports[0]?.patient_name || 'Unknown'}`, margin, y)
+    y += 7
+    doc.text(`Date: ${new Date().toLocaleDateString()}`, margin, y)
+    y += 15
+    
+    // Rx symbol
+    doc.setFontSize(24)
+    doc.setFont(undefined, 'bold')
+    doc.text('Rx', margin, y)
+    y += 15
+    
+    // Prescription details
+    doc.setFontSize(12)
+    doc.setFont(undefined, 'normal')
+    doc.text(`Drug: ${drugName}`, margin + 10, y)
+    y += 8
+    if (dosage) {
+      doc.text(`Dosage: ${dosage}`, margin + 10, y)
+      y += 8
+    }
+    if (frequency) {
+      doc.text(`Frequency: ${frequency}`, margin + 10, y)
+      y += 8
+    }
+    if (duration) {
+      doc.text(`Duration: ${duration}`, margin + 10, y)
+      y += 8
+    }
+    
+    // Safety warning if present
+    if (safetyWarning && safetyWarning.hasAllergy) {
+      y += 10
+      doc.setTextColor(200, 0, 0)
+      doc.setFontSize(10)
+      doc.setFont(undefined, 'bold')
+      doc.text('⚠ ALLERGY ALERT', margin, y)
+      y += 6
+      doc.setFont(undefined, 'normal')
+      doc.text(safetyWarning.allergyDetails || 'Patient has known allergies', margin, y)
+      doc.setTextColor(0, 0, 0)
+      y += 10
+    }
+    
+    // Signature
+    y += 20
+    doc.setFontSize(10)
+    doc.text('_________________________', margin, y)
+    y += 7
+    doc.text('Doctor Signature', margin, y)
+    
+    // Download
+    doc.save(`prescription_${drugName.replace(/\s+/g, '_')}_${new Date().toISOString().split('T')[0]}.pdf`)
   }
 
   const handleSendMessage = async () => {
@@ -768,6 +883,18 @@ export function PatientChartView({ patientId }) {
                     <MessageSquare className="h-3.5 w-3.5" />
                     Chat
                   </button>
+                  <button
+                    onClick={() => setActiveTab('rx')}
+                    className={cn(
+                      "flex items-center gap-2 px-3 py-1.5 text-xs font-semibold rounded-md transition-all",
+                      activeTab === 'rx'
+                        ? "bg-blue-500 text-white"
+                        : "text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700"
+                    )}
+                  >
+                    <FileText className="h-3.5 w-3.5" />
+                    Rx
+                  </button>
                 </div>
                 {activeTab === 'summary' && (
                   <div className="flex items-center gap-2">
@@ -1107,6 +1234,185 @@ export function PatientChartView({ patientId }) {
                       <Send className="h-4 w-4" />
                       <span className="text-sm font-bold">Send</span>
                     </button>
+                  </div>
+                </div>
+              </div>
+            )}
+            
+            {/* Prescription (Rx) Tab */}
+            {activeTab === 'rx' && (
+              <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
+                <div className="flex-1 overflow-auto p-4">
+                  <div className="max-w-2xl mx-auto space-y-4">
+                    <div className="bg-gradient-to-r from-blue-50 to-indigo-50 dark:from-blue-900/20 dark:to-indigo-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-4">
+                      <h3 className="text-sm font-semibold text-blue-900 dark:text-blue-100 mb-1">
+                        Write Prescription
+                      </h3>
+                      <p className="text-xs text-blue-700 dark:text-blue-300">
+                        Complete the form below and run a safety check before printing
+                      </p>
+                    </div>
+                    
+                    {/* Drug Name */}
+                    <div>
+                      <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1.5">
+                        Drug Name *
+                      </label>
+                      <input
+                        type="text"
+                        value={drugName}
+                        onChange={(e) => {
+                          setDrugName(e.target.value)
+                          setSafetyCheckDone(false)
+                          setSafetyWarning(null)
+                        }}
+                        placeholder="e.g., Amoxicillin"
+                        className="w-full text-sm px-3 py-2 rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-700 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-400"
+                      />
+                    </div>
+                    
+                    {/* Dosage */}
+                    <div>
+                      <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1.5">
+                        Dosage
+                      </label>
+                      <input
+                        type="text"
+                        value={dosage}
+                        onChange={(e) => setDosage(e.target.value)}
+                        placeholder="e.g., 500mg"
+                        className="w-full text-sm px-3 py-2 rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-700 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-400"
+                      />
+                    </div>
+                    
+                    {/* Frequency */}
+                    <div>
+                      <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1.5">
+                        Frequency
+                      </label>
+                      <input
+                        type="text"
+                        value={frequency}
+                        onChange={(e) => setFrequency(e.target.value)}
+                        placeholder="e.g., 3 times daily"
+                        className="w-full text-sm px-3 py-2 rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-700 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-400"
+                      />
+                    </div>
+                    
+                    {/* Duration */}
+                    <div>
+                      <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1.5">
+                        Duration
+                      </label>
+                      <input
+                        type="text"
+                        value={duration}
+                        onChange={(e) => setDuration(e.target.value)}
+                        placeholder="e.g., 7 days"
+                        className="w-full text-sm px-3 py-2 rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-700 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-400"
+                      />
+                    </div>
+                    
+                    {/* Safety Check Button */}
+                    <div className="flex gap-2">
+                      <button
+                        onClick={handleSafetyCheck}
+                        disabled={!drugName.trim() || safetyCheckLoading}
+                        className={cn(
+                          "flex-1 px-4 py-2.5 text-sm font-medium rounded-md transition-all flex items-center justify-center gap-2",
+                          !drugName.trim() || safetyCheckLoading
+                            ? "bg-slate-200 dark:bg-slate-700 text-slate-400 cursor-not-allowed"
+                            : "bg-orange-500 text-white hover:bg-orange-600"
+                        )}
+                      >
+                        {safetyCheckLoading ? (
+                          <>
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                            Checking...
+                          </>
+                        ) : (
+                          <>
+                            <AlertTriangle className="h-4 w-4" />
+                            Safety Check
+                          </>
+                        )}
+                      </button>
+                      
+                      <button
+                        onClick={handlePrintPrescription}
+                        disabled={!drugName.trim()}
+                        className={cn(
+                          "flex-1 px-4 py-2.5 text-sm font-medium rounded-md transition-all flex items-center justify-center gap-2",
+                          !drugName.trim()
+                            ? "bg-slate-200 dark:bg-slate-700 text-slate-400 cursor-not-allowed"
+                            : "bg-blue-500 text-white hover:bg-blue-600"
+                        )}
+                      >
+                        <FileText className="h-4 w-4" />
+                        Print Prescription
+                      </button>
+                    </div>
+                    
+                    {/* Safety Check Results */}
+                    {safetyCheckDone && !safetyWarning && (
+                      <div className="bg-green-50 dark:bg-green-900/20 border border-green-300 dark:border-green-800 rounded-md p-3 flex items-start gap-2">
+                        <CheckCircle2 className="h-4 w-4 text-green-600 dark:text-green-400 flex-shrink-0 mt-0.5" />
+                        <div>
+                          <p className="text-xs font-medium text-green-800 dark:text-green-200">
+                            No Allergies Detected
+                          </p>
+                          <p className="text-xs text-green-700 dark:text-green-300 mt-0.5">
+                            Safe to prescribe {drugName}
+                          </p>
+                        </div>
+                      </div>
+                    )}
+                    
+                    {safetyWarning && safetyWarning.hasAllergy && (
+                      <div className="bg-red-50 dark:bg-red-900/20 border-2 border-red-500 dark:border-red-700 rounded-md p-3 animate-pulse">
+                        <div className="flex items-start gap-2">
+                          <AlertTriangle className="h-5 w-5 text-red-600 dark:text-red-400 flex-shrink-0 mt-0.5" />
+                          <div className="flex-1">
+                            <p className="text-sm font-bold text-red-800 dark:text-red-200">
+                              ⚠️ ALLERGY ALERT
+                            </p>
+                            <p className="text-xs text-red-700 dark:text-red-300 mt-1">
+                              {safetyWarning.allergyDetails || 'Patient may have allergies to this medication'}
+                            </p>
+                            {safetyWarning.warnings && safetyWarning.warnings.length > 0 && (
+                              <ul className="mt-2 space-y-1">
+                                {safetyWarning.warnings.map((warning, idx) => (
+                                  <li key={idx} className="text-xs text-red-600 dark:text-red-400 flex items-start gap-1">
+                                    <span className="mt-0.5">•</span>
+                                    <span>{warning}</span>
+                                  </li>
+                                ))}
+                              </ul>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                    
+                    {safetyWarning && !safetyWarning.hasAllergy && safetyWarning.warnings && safetyWarning.warnings.length > 0 && (
+                      <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-300 dark:border-yellow-800 rounded-md p-3">
+                        <div className="flex items-start gap-2">
+                          <AlertTriangle className="h-4 w-4 text-yellow-600 dark:text-yellow-400 flex-shrink-0 mt-0.5" />
+                          <div>
+                            <p className="text-xs font-medium text-yellow-800 dark:text-yellow-200">
+                              Safety Check Issues
+                            </p>
+                            <ul className="mt-1 space-y-1">
+                              {safetyWarning.warnings.map((warning, idx) => (
+                                <li key={idx} className="text-xs text-yellow-700 dark:text-yellow-300">
+                                  • {warning}
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
