@@ -128,11 +128,13 @@ class ChatRequest(BaseModel):
 class AnnotationRequest(BaseModel):
     patient_id: int = Field(..., description="Patient ID for the annotation")
     doctor_note: str = Field(..., description="Doctor's note/annotation text")
+    selected_text: Optional[str] = Field(default=None, description="Selected text from summary that is being annotated")
 
 class AnnotationResponse(BaseModel):
     annotation_id: int
     patient_id: int
     doctor_note: str
+    selected_text: Optional[str] = None
     created_at: str
 
 def _embed_text(text: str) -> List[float]:
@@ -677,11 +679,11 @@ def create_annotation(payload: AnnotationRequest):
         # Insert annotation
         cur.execute(
             """
-            INSERT INTO annotations (patient_id, doctor_note, created_at)
-            VALUES (%s, %s, CURRENT_TIMESTAMP)
-            RETURNING annotation_id, patient_id, doctor_note, created_at
+            INSERT INTO annotations (patient_id, doctor_note, selected_text, created_at)
+            VALUES (%s, %s, %s, CURRENT_TIMESTAMP)
+            RETURNING annotation_id, patient_id, doctor_note, selected_text, created_at
             """,
-            (payload.patient_id, payload.doctor_note)
+            (payload.patient_id, payload.doctor_note, payload.selected_text)
         )
         row = cur.fetchone()
         conn.commit()
@@ -690,7 +692,8 @@ def create_annotation(payload: AnnotationRequest):
             annotation_id=row[0],
             patient_id=row[1],
             doctor_note=row[2],
-            created_at=row[3].isoformat()
+            selected_text=row[3],
+            created_at=row[4].isoformat()
         )
     except HTTPException:
         raise
@@ -722,7 +725,7 @@ def get_annotations(patient_id: int = Path(..., description="Patient ID to fetch
         # Fetch all annotations for this patient
         cur.execute(
             """
-            SELECT annotation_id, patient_id, doctor_note, created_at
+            SELECT annotation_id, patient_id, doctor_note, selected_text, created_at
             FROM annotations
             WHERE patient_id = %s
             ORDER BY created_at DESC
@@ -736,7 +739,8 @@ def get_annotations(patient_id: int = Path(..., description="Patient ID to fetch
                 annotation_id=row[0],
                 patient_id=row[1],
                 doctor_note=row[2],
-                created_at=row[3].isoformat()
+                selected_text=row[3],
+                created_at=row[4].isoformat()
             )
             for row in rows
         ]

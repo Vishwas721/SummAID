@@ -1,12 +1,13 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import jsPDF from 'jspdf'
 import axios from 'axios'
 import { Document, Page, pdfjs } from 'react-pdf'
 import 'react-pdf/dist/Page/AnnotationLayer.css'
 import 'react-pdf/dist/Page/TextLayer.css'
 import { PanelGroup, Panel, PanelResizeHandle } from 'react-resizable-panels'
-import { FileText, Sparkles, AlertTriangle, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Loader2, Eye, EyeOff, MessageSquare, Send, CheckCircle2 } from 'lucide-react'
+import { FileText, Sparkles, AlertTriangle, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Loader2, Eye, EyeOff, MessageSquare, Send, CheckCircle2, Plus, X } from 'lucide-react'
 import { cn } from '../lib/utils'
+import Highlighter from 'react-highlight-words'
 
 // Configure PDF.js worker - use local build from node_modules
 pdfjs.GlobalWorkerOptions.workerSrc = new URL(
@@ -49,6 +50,15 @@ export function PatientChartView({ patientId }) {
   const [noteSaving, setNoteSaving] = useState(false)
   const [noteError, setNoteError] = useState(null)
   const [noteSaved, setNoteSaved] = useState(false)
+  
+  // Text highlighting and annotation state
+  const [selectedText, setSelectedText] = useState('')
+  const [selectionPosition, setSelectionPosition] = useState(null)
+  const [showAnnotationModal, setShowAnnotationModal] = useState(false)
+  const [annotationNote, setAnnotationNote] = useState('')
+  const [annotations, setAnnotations] = useState([]) // {annotation_id, selected_text, note, created_at}
+  const [loadingAnnotations, setLoadingAnnotations] = useState(false)
+  const summaryRef = useRef(null)
 
   // Reset summary and citations when patient changes
   useEffect(() => {
@@ -66,6 +76,10 @@ export function PatientChartView({ patientId }) {
     setNoteText('')
     setNoteError(null)
     setNoteSaved(false)
+    setAnnotations([])
+    setSelectedText('')
+    setSelectionPosition(null)
+    setShowAnnotationModal(false)
     
     // Auto-load summary for Doctor when patient changes
     if (userRole === 'DOCTOR' && patientId) {
@@ -154,6 +168,83 @@ export function PatientChartView({ patientId }) {
     } catch (e) {
       console.error('Save annotation error', e)
       setNoteError(e.response?.data?.detail || e.message || 'Failed to save note')
+    } finally {
+      setNoteSaving(false)
+    }
+  }
+
+  // Handle text selection in summary
+  const handleTextSelection = useCallback(() => {
+    const selection = window.getSelection()
+    const text = selection?.toString().trim()
+    
+    if (text && text.length > 0 && summaryRef.current?.contains(selection.anchorNode)) {
+      const range = selection.getRangeAt(0)
+      const rect = range.getBoundingClientRect()
+      
+      setSelectedText(text)
+      setSelectionPosition({
+        top: rect.bottom + window.scrollY,
+        left: rect.left + window.scrollX + (rect.width / 2)
+      })
+    } else {
+      setSelectedText('')
+      setSelectionPosition(null)
+    }
+  }, [])
+
+  // Fetch annotations for current patient
+  const fetchAnnotations = useCallback(async () => {
+    if (!patientId) return
+    setLoadingAnnotations(true)
+    try {
+      const url = `${import.meta.env.VITE_API_URL}/annotations/${encodeURIComponent(patientId)}`
+      const response = await axios.get(url)
+      setAnnotations(response.data || [])
+    } catch (e) {
+      console.error('Fetch annotations error', e)
+    } finally {
+      setLoadingAnnotations(false)
+    }
+  }, [patientId])
+
+  // Load annotations when summary is generated
+  useEffect(() => {
+    if (summary && patientId) {
+      fetchAnnotations()
+    }
+  }, [summary, patientId, fetchAnnotations])
+
+  // Handle saving annotation with selected text
+  const handleSaveAnnotation = async () => {
+    if (!patientId || !selectedText || !annotationNote.trim()) return
+    
+    setNoteSaving(true)
+    setNoteError(null)
+    try {
+      const url = `${import.meta.env.VITE_API_URL}/annotate`
+      const response = await axios.post(url, {
+        patient_id: patientId,
+        doctor_note: annotationNote.trim(),
+        selected_text: selectedText
+      })
+      
+      if (response && response.data) {
+        // Add new annotation to list
+        setAnnotations(prev => [response.data, ...prev])
+        
+        // Reset state
+        setAnnotationNote('')
+        setShowAnnotationModal(false)
+        setSelectedText('')
+        setSelectionPosition(null)
+        
+        // Clear selection
+        window.getSelection()?.removeAllRanges()
+      }
+    } catch (e) {
+      console.error('Save annotation error', e)
+      setNoteError(e.response?.data?.detail || e.message || 'Failed to save annotation')
     } finally {
       setNoteSaving(false)
     }
@@ -755,10 +846,40 @@ export function PatientChartView({ patientId }) {
                 )}
                 
                 {!generating && summary && (
-                  <div className="prose prose-sm dark:prose-invert max-w-none">
-                    <div className="text-sm leading-relaxed text-slate-700 dark:text-slate-300 whitespace-pre-wrap">
-                      {summary}
+                  <div className="prose prose-sm dark:prose-invert max-w-none relative">
+                    <div 
+                      ref={summaryRef}
+                      onMouseUp={handleTextSelection}
+                      className="text-sm leading-relaxed text-slate-700 dark:text-slate-300 whitespace-pre-wrap select-text"
+                    >
+                      <Highlighter
+                        searchWords={annotations.filter(a => a.selected_text).map(a => a.selected_text)}
+                        autoEscape={true}
+                        textToHighlight={summary}
+                        highlightClassName="bg-yellow-200 dark:bg-yellow-700 cursor-pointer"
+                        highlightStyle={{ backgroundColor: '#fef08a', padding: '2px 0' }}
+                      />
                     </div>
+                    
+                    {/* Floating "+ Note" button */}
+                    {selectedText && selectionPosition && (
+                      <div
+                        className="fixed z-50 animate-in fade-in duration-200"
+                        style={{
+                          top: `${selectionPosition.top + 5}px`,
+                          left: `${selectionPosition.left}px`,
+                          transform: 'translateX(-50%)'
+                        }}
+                      >
+                        <button
+                          onClick={() => setShowAnnotationModal(true)}
+                          className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 text-white text-xs font-medium rounded-md shadow-lg hover:bg-blue-700 transition-all"
+                        >
+                          <Plus className="h-3.5 w-3.5" />
+                          Note
+                        </button>
+                      </div>
+                    )}
                   </div>
                 )}
                 
@@ -1035,6 +1156,98 @@ export function PatientChartView({ patientId }) {
         </div>
       </Panel>
       </PanelGroup>
+      
+      {/* Annotation Modal */}
+      {showAnnotationModal && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 animate-in fade-in duration-200">
+          <div className="bg-white dark:bg-slate-800 rounded-lg shadow-xl max-w-md w-full animate-in zoom-in-95 duration-200">
+            <div className="flex items-center justify-between p-4 border-b border-slate-200 dark:border-slate-700">
+              <h3 className="text-sm font-semibold text-slate-700 dark:text-slate-200">Add Annotation</h3>
+              <button
+                onClick={() => {
+                  setShowAnnotationModal(false)
+                  setAnnotationNote('')
+                  setSelectedText('')
+                  setSelectionPosition(null)
+                  window.getSelection()?.removeAllRanges()
+                }}
+                className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            
+            <div className="p-4 space-y-3">
+              <div>
+                <label className="text-xs font-medium text-slate-600 dark:text-slate-400 block mb-1">
+                  Selected Text:
+                </label>
+                <div className="text-xs bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded p-2 text-slate-700 dark:text-slate-300">
+                  "{selectedText}"
+                </div>
+              </div>
+              
+              <div>
+                <label className="text-xs font-medium text-slate-600 dark:text-slate-400 block mb-1">
+                  Your Note:
+                </label>
+                <textarea
+                  value={annotationNote}
+                  onChange={(e) => setAnnotationNote(e.target.value)}
+                  placeholder="e.g., Check again in 3 months"
+                  rows={3}
+                  className="w-full text-xs px-3 py-2 rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-700 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-400 resize-none"
+                  autoFocus
+                />
+              </div>
+              
+              {noteError && (
+                <div className="p-2 bg-red-50 dark:bg-red-900/20 border border-red-300 dark:border-red-800 rounded text-xs text-red-700 dark:text-red-300 flex items-start gap-2">
+                  <AlertTriangle className="h-3 w-3 flex-shrink-0 mt-0.5" />
+                  <span>{noteError}</span>
+                </div>
+              )}
+            </div>
+            
+            <div className="flex items-center justify-end gap-2 p-4 border-t border-slate-200 dark:border-slate-700">
+              <button
+                onClick={() => {
+                  setShowAnnotationModal(false)
+                  setAnnotationNote('')
+                  setSelectedText('')
+                  setSelectionPosition(null)
+                  window.getSelection()?.removeAllRanges()
+                }}
+                className="px-3 py-1.5 text-xs font-medium text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-md transition-all"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSaveAnnotation}
+                disabled={noteSaving || !annotationNote.trim()}
+                className={cn(
+                  "px-3 py-1.5 text-xs font-medium rounded-md transition-all flex items-center gap-1.5",
+                  noteSaving || !annotationNote.trim()
+                    ? "bg-slate-200 dark:bg-slate-700 text-slate-400 cursor-not-allowed"
+                    : "bg-blue-500 text-white hover:bg-blue-600"
+                )}
+              >
+                {noteSaving ? (
+                  <>
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                    Saving...
+                  </>
+                ) : (
+                  <>
+                    <CheckCircle2 className="h-3 w-3" />
+                    Save Annotation
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

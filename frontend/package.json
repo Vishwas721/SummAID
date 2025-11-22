@@ -16,6 +16,7 @@
     "pdfjs-dist": "^5.4.296",
     "react": "^19.1.1",
     "react-dom": "^19.1.1",
+    "react-highlight-words": "^0.21.0",
     "react-pdf": "^10.2.0",
     "react-resizable-panels": "^3.0.6",
     "react-router-dom": "^7.9.5",
