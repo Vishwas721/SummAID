@@ -496,6 +496,24 @@ async def summarize_patient(
                 "source_full_text": norm_full,
                 "source_metadata": enriched_meta
             })
+        # 7. Persist summary & mark chart prepared
+        try:
+            conn2 = get_db_connection(); cur2 = conn2.cursor()
+            # Upsert patient_summaries
+            cur2.execute("""
+                INSERT INTO patient_summaries (patient_id, summary_text, patient_type, chief_complaint, citations)
+                VALUES (%s, %s, %s, %s, %s::jsonb)
+                ON CONFLICT (patient_id) DO UPDATE
+                  SET summary_text = EXCLUDED.summary_text,
+                      patient_type = EXCLUDED.patient_type,
+                      chief_complaint = EXCLUDED.chief_complaint,
+                      citations = EXCLUDED.citations,
+                      generated_at = CURRENT_TIMESTAMP
+            """, (patient_id, summary_text, patient_type, payload.chief_complaint, json.dumps(citations)))
+            cur2.execute("UPDATE patients SET chart_prepared_at = CURRENT_TIMESTAMP WHERE patient_id=%s", (patient_id,))
+            conn2.commit(); cur2.close(); conn2.close()
+        except Exception as e:
+            logger.warning(f"Failed to persist summary for patient {patient_id}: {e}")
         return {"summary_text": summary_text, "citations": citations}
     except HTTPException:
         raise
@@ -758,6 +776,35 @@ def get_annotations(patient_id: int = Path(..., description="Patient ID to fetch
     except Exception as e:
         logger.exception(f"Error fetching annotations for patient {patient_id}")
         raise HTTPException(status_code=500, detail=f"Annotation retrieval error: {e}")
+    finally:
+        if conn:
+            conn.close()
+
+@app.get("/summary/{patient_id}")
+def fetch_patient_summary(patient_id: int = Path(..., description="Patient ID to fetch persisted summary for")):
+    """Return persisted summary & citations if chart prepared; 404 if not available."""
+    conn = None
+    try:
+        conn = get_db_connection(); cur = conn.cursor()
+        cur.execute("SELECT summary_text, patient_type, chief_complaint, citations, generated_at FROM patient_summaries WHERE patient_id=%s", (patient_id,))
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Summary not prepared")
+        summary_text, patient_type, chief_complaint, citations_json, generated_at = row
+        # citations_json is already JSONB; ensure proper Python structure
+        citations = citations_json if isinstance(citations_json, list) else citations_json
+        return {
+            "summary_text": summary_text,
+            "citations": citations,
+            "patient_type": patient_type,
+            "chief_complaint": chief_complaint,
+            "generated_at": generated_at.isoformat() if hasattr(generated_at, 'isoformat') else str(generated_at)
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"Fetch summary error patient_id={patient_id}")
+        raise HTTPException(status_code=500, detail=f"Summary fetch error: {e}")
     finally:
         if conn:
             conn.close()
