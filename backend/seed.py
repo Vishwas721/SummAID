@@ -27,7 +27,7 @@ def _sanitize_key(raw: str) -> str:
 DB_URL = os.getenv("DATABASE_URL")
 ENCRYPTION_KEY = _sanitize_key(os.getenv("ENCRYPTION_KEY"))
 OLLAMA_EMBED_MODEL = "nomic-embed-text"
-PDF_DIRECTORY = "./demo_reports/"
+PDF_DIRECTORY = "./demo_reports/"  # Root containing subdirectories like 'oncology', 'speech_hearing'
 
 if not DB_URL or not ENCRYPTION_KEY:
     raise ValueError("DATABASE_URL and ENCRYPTION_KEY must be set in .env file")
@@ -148,19 +148,42 @@ def get_embedding(text: str) -> List[float]:
     else:
         raise Exception(f"Unexpected embed response format: {data.keys()}")
 
-def infer_report_type(filename: str) -> str:
-    """Infer report type from filename keywords."""
-    lower = filename.lower()
-    if 'mri' in lower or 'ct' in lower or 'xray' in lower or 'radiology' in lower or 'imaging' in lower:
+def infer_report_type(file_path: str) -> str:
+    """Infer report type using both filename and directory context.
+    Directory signals act as strong defaults with keyword refinement.
+    - speech_hearing/: defaults to 'Speech Therapy' unless audiology keyword present
+    - oncology/: radiology/pathology keywords first; else 'Oncology Report'
+    Otherwise fall back to filename keyword heuristics.
+    """
+    filename = os.path.basename(file_path)
+    lower_fp = file_path.lower()
+    lower_name = filename.lower()
+
+    # Speech / Hearing directory logic
+    if 'speech_hearing' in lower_fp:
+        if 'audio' in lower_name or 'audiology' in lower_name:
+            return 'Audiology'
+        # Default when no specific audiology keyword
+        return 'Speech Therapy'
+
+    # Oncology directory logic
+    if 'oncology' in lower_fp:
+        if any(k in lower_name for k in ['mri', 'ct', 'xray', 'radiology', 'imaging']):
+            return 'Radiology'
+        if any(k in lower_name for k in ['path', 'biopsy', 'histology']):
+            return 'Pathology'
+        return 'Oncology Report'
+
+    # Generic filename-based inference
+    if any(k in lower_name for k in ['mri', 'ct', 'xray', 'radiology', 'imaging']):
         return 'Radiology'
-    elif 'path' in lower or 'biopsy' in lower or 'histology' in lower:
+    if any(k in lower_name for k in ['path', 'biopsy', 'histology']):
         return 'Pathology'
-    elif 'lab' in lower or 'blood' in lower or 'cbc' in lower:
+    if any(k in lower_name for k in ['lab', 'blood', 'cbc']):
         return 'Laboratory'
-    elif 'discharge' in lower or 'summary' in lower:
+    if any(k in lower_name for k in ['discharge', 'summary']):
         return 'Clinical Summary'
-    else:
-        return 'General'
+    return 'General'
 
 def main():
     # Connect to database
@@ -175,37 +198,51 @@ def main():
         # This allows multiple PDFs to belong to the same demo patient
         patient_report_mapping = {}
         
-        # Scan all PDFs and build patient mapping
-        pdf_files = [f for f in os.listdir(PDF_DIRECTORY) if f.lower().endswith('.pdf')]
+        # Scan all PDFs (including subdirectories) and build patient mapping
+        pdf_files = []
+        for root, _dirs, files in os.walk(PDF_DIRECTORY):
+            for f in files:
+                if f.lower().endswith('.pdf'):
+                    pdf_files.append(os.path.join(root, f))
         
         # Strategy: group by base name before first underscore or number
         # For demo purposes, we'll create logical patient groupings:
         # If files share a common prefix (before _ or before trailing digits), group them under same patient
         import re
-        for filename in pdf_files:
+        def extract_patient_key_and_display(base: str) -> Tuple[str, str]:
+            original = base
+            # Normalize underscores to spaces
+            cleaned = original.replace('_', ' ').strip()
+            # Remove trailing digits
+            cleaned = re.sub(r'\d+$', '', cleaned).strip()
+            # Remove common trailing tokens (e.g., Report, MRI) if they appear at end
+            cleaned = re.sub(r'(?:report|summary|mri|ct|xray)$', '', cleaned, flags=re.IGNORECASE).strip()
+            # Collapse multiple spaces
+            cleaned = re.sub(r'\s+', ' ', cleaned)
+            if not cleaned:
+                cleaned = original
+            display = cleaned.title()
+            # patient_key: slugify (lowercase, remove non-alnum except space -> underscore)
+            slug = re.sub(r'[^a-z0-9 ]+', '', display.lower())
+            slug = re.sub(r'\s+', '_', slug).strip('_')
+            if not slug:
+                slug = original.lower()
+            return slug, display
+
+        for file_path in pdf_files:
+            filename = os.path.basename(file_path)
             base = os.path.splitext(filename)[0]
-            
-            # Try to extract patient identifier
-            # 1. Check for underscore separator (e.g., "jane_mri.pdf" -> "jane")
-            parts = base.split('_')
-            if len(parts) > 1 and parts[0].lower() in ['patient', 'jane', 'john', 'demo', 'vignesh']:
-                patient_key = parts[0].lower()
-            else:
-                # 2. Remove trailing digits (e.g., "Vignesh1" -> "vignesh", "Vignesh2" -> "vignesh")
-                patient_key = re.sub(r'\d+$', '', base).lower().strip()
-                # If nothing left after removing digits, use the full base
-                if not patient_key:
-                    patient_key = base.lower()
-            
+            patient_key, display_name = extract_patient_key_and_display(base)
+
             if patient_key not in patient_report_mapping:
-                patient_report_mapping[patient_key] = []
-            patient_report_mapping[patient_key].append(filename)
+                patient_report_mapping[patient_key] = {'display': display_name, 'files': []}
+            patient_report_mapping[patient_key]['files'].append(file_path)
         
         # Create patients and process their reports
-        for patient_key, report_files in patient_report_mapping.items():
-            # Create patient record
+        for patient_key, info in patient_report_mapping.items():
+            report_files = info['files']
+            display_name = info['display']
             patient_demo_id = f"patient_{patient_key}"
-            display_name = patient_key.replace('_', ' ').title()
             
             cur.execute("""
                 INSERT INTO patients (patient_demo_id, patient_display_name)
@@ -217,8 +254,8 @@ def main():
             print(f"\nCreated patient: {display_name} (ID: {patient_id}, demo_id: {patient_demo_id})")
             
             # Process each report for this patient
-            for filename in report_files:
-                file_path = os.path.join(PDF_DIRECTORY, filename)
+            for file_path in report_files:
+                filename = os.path.basename(file_path)
                 print(f"  Processing report: {filename}...")
                 
                 # Extract text from PDF
@@ -231,7 +268,7 @@ def main():
                 full_text = "\n\n".join(text for text, _ in pages_text)
                 
                 # Infer report type
-                report_type = infer_report_type(filename)
+                report_type = infer_report_type(file_path)
                 
                 # Create report entry
                 cur.execute("""
