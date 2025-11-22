@@ -105,6 +105,14 @@ async def get_patients():
 EMBED_MODEL = os.getenv("EMBED_MODEL", "nomic-embed-text")  # 768-dim
 GEN_MODEL = os.getenv("GEN_MODEL", "llama3:8b")  # generation model via Ollama
 
+# System prompts
+STANDARD_PROMPT = (
+    "You are a clinical assistant. Summarize these reports for a doctor."
+)
+SPEECH_PROMPT = (
+    "You are an expert Audiologist. Summarize the patient's hearing levels (dB), speech intelligibility, and therapy goals. Do not look for tumors."
+)
+
 class SummarizeRequest(BaseModel):
     keywords: Optional[List[str]] = Field(default=None, description="Optional keyword filters for hybrid search")
     max_chunks: int = Field(default=20, ge=1, le=50, description="Maximum number of chunks from similarity search (increased to capture more context including critical findings)")
@@ -151,8 +159,9 @@ def _embed_text(text: str) -> List[float]:
         return emb[0] if isinstance(emb, list) else emb
     raise HTTPException(status_code=500, detail=f"Embedding key missing in response: {data}")
 
-def _generate_summary(context_chunks: List[str], patient_label: str) -> str:
-    """Generate synthesized clinical narrative with robust CUDA fallback and context trimming."""
+def _generate_summary(context_chunks: List[str], patient_label: str, system_prompt: str) -> str:
+    """Generate synthesized clinical narrative with robust CUDA fallback and context trimming.
+    system_prompt controls domain framing (standard vs speech/hearing)."""
     joined = "\n\n".join(context_chunks)
     MAX_SAFE_CHARS = 18000
     if len(joined) > MAX_SAFE_CHARS:
@@ -160,7 +169,7 @@ def _generate_summary(context_chunks: List[str], patient_label: str) -> str:
     approx_tokens = len(joined) // 4
     logger.debug(f"Summarization context chars={len(joined)} approx_tokens={approx_tokens}")
     prompt = (
-        f"You are a clinical assistant. Summarize these reports for a doctor.\n\n"
+        f"{system_prompt}\n\n"
         f"Strict Formatting Rules:\n"
         f"- Key Findings: Use bullet points.\n"
         f"- Lab Values: If there are lab results, output them in a Markdown table with columns: Date | Test | Value | Flag (High/Low/Normal). Include only abnormal or clinically relevant normals for rule-outs.\n"
@@ -202,7 +211,7 @@ def _generate_summary(context_chunks: List[str], patient_label: str) -> str:
             return False, json.dumps(data)[:300]
         out = data.get('response') or data.get('output') or ''
         if not out:
-            return False, f"empty:{data}" 
+            return False, f"empty:{data}"
         return True, out.strip()
 
     ok, primary = _try(GEN_MODEL, prompt)
@@ -216,14 +225,21 @@ def _generate_summary(context_chunks: List[str], patient_label: str) -> str:
             ok2, res2 = _try(fm, prompt)
             if ok2:
                 return res2 + "\n(Note: Quantized fallback model used due to GPU memory constraints.)"
-        # Reduce context aggressively (keep final half)
         reduced = joined[-(MAX_SAFE_CHARS // 2):]
-        reduced_prompt = prompt.replace("Context (Medical Reports):\n" + joined, "Context (Reduced Extract):\n" + reduced)
+        reduced_prompt = prompt.replace(f"Context:\n{joined}", f"Context (Reduced Extract):\n{reduced}")
         ok3, res3 = _try(GEN_MODEL, reduced_prompt)
         if ok3:
             return res3 + "\n(Note: Context reduced due to GPU memory constraints.)"
         raise HTTPException(status_code=500, detail=f"Generation GPU error; all fallbacks failed: {primary}")
     raise HTTPException(status_code=500, detail=f"Generation error: {primary}")
+
+def _infer_patient_type(report_types: List[str]) -> str:
+    """Infer patient type category from list of report_types.
+    Returns 'speech' if any speech/audiology types present, otherwise 'oncology'."""
+    speech_markers = {"Speech Therapy", "Audiology"}
+    if any(rt in speech_markers for rt in report_types):
+        return "speech"
+    return "oncology"
 
 def _answer_question(context_chunks: List[str], question: str) -> str:
     """Answer a specific question using RAG context with robust fallback handling."""
@@ -328,12 +344,18 @@ async def summarize_patient(
         display_name, patient_demo_id = prow[0], prow[1]
         label = display_name or patient_demo_id or str(patient_id)
 
-        cur.execute("SELECT report_id FROM reports WHERE patient_id=%s ORDER BY report_id", (patient_id,))
+        cur.execute("SELECT report_id, report_type FROM reports WHERE patient_id=%s ORDER BY report_id", (patient_id,))
         report_rows = cur.fetchall()
         report_ids = [r[0] for r in report_rows]
+        report_types = [r[1] for r in report_rows]
         if not report_ids:
             cur.close(); conn.close()
             raise HTTPException(status_code=404, detail=f"No reports found for patient_id={patient_id}")
+
+        # Determine patient type for prompt selection
+        patient_type = _infer_patient_type(report_types)
+        system_prompt = SPEECH_PROMPT if patient_type == "speech" else STANDARD_PROMPT
+        logger.debug(f"Summarize patient_id={patient_id} type={patient_type} using prompt='{system_prompt[:60]}...'")
 
         # 2. Build embedding basis - use clinically-focused query for better retrieval
         if payload.keywords:
@@ -445,7 +467,7 @@ async def summarize_patient(
             raise HTTPException(status_code=404, detail=f"No chunks found for patient_id={patient_id}")
 
         # 5. Generate summary using display label
-        summary_text = _generate_summary([t for _,_,t,_ in context_accum], label)
+        summary_text = _generate_summary([t for _,_,t,_ in context_accum], label, system_prompt)
 
         # 6. Citations
         citations = []
