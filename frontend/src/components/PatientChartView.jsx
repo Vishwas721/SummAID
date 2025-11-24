@@ -449,166 +449,327 @@ export function PatientChartView({ patientId }) {
   const handleDownloadPdf = () => {
     try {
       const doc = new jsPDF({ unit: 'pt', format: 'a4' })
-      const margin = 40
+      const margin = 50
       const pageWidth = doc.internal.pageSize.getWidth()
       const pageHeight = doc.internal.pageSize.getHeight()
       const maxWidth = pageWidth - margin * 2
       let y = margin
 
-      const addHeading = (text) => {
+      // Professional header with logo placeholder
+      doc.setFillColor(37, 99, 235) // Blue header
+      doc.rect(0, 0, pageWidth, 60, 'F')
+      doc.setFont('helvetica', 'bold')
+      doc.setFontSize(20)
+      doc.setTextColor(255, 255, 255)
+      doc.text('SummAID', margin, 35)
+      doc.setFontSize(10)
+      doc.setFont('helvetica', 'normal')
+      doc.text('Clinical Summary Report', margin, 48)
+      
+      // Patient info box
+      y = 80
+      doc.setTextColor(0, 0, 0)
+      doc.setDrawColor(200, 200, 200)
+      doc.setLineWidth(1)
+      doc.roundedRect(margin, y, maxWidth, 50, 3, 3, 'S')
+      
+      doc.setFont('helvetica', 'bold')
+      doc.setFontSize(11)
+      doc.text('Patient ID:', margin + 10, y + 20)
+      doc.setFont('helvetica', 'normal')
+      doc.text(String(patientId), margin + 80, y + 20)
+      
+      if (chiefComplaint) {
         doc.setFont('helvetica', 'bold')
-        doc.setFontSize(12)
-        y = ensurePageSpace(doc, y, 18, margin)
-        doc.text(text, margin, y)
-        y += 8
-        doc.setDrawColor(200)
-        doc.line(margin, y, pageWidth - margin, y)
-        y += 10
+        doc.text('Chief Complaint:', margin + 10, y + 38)
+        doc.setFont('helvetica', 'normal')
+        const ccText = doc.splitTextToSize(chiefComplaint, maxWidth - 130)
+        doc.text(ccText, margin + 120, y + 38)
+      }
+      
+      const ts = new Date().toLocaleDateString('en-US', { 
+        year: 'numeric', month: 'long', day: 'numeric',
+        hour: '2-digit', minute: '2-digit'
+      })
+      doc.setFontSize(9)
+      doc.setTextColor(100, 100, 100)
+      doc.text(`Generated: ${ts}`, pageWidth - margin - 150, y + 20)
+      
+      y += 70
+      doc.setTextColor(0, 0, 0)
+
+      // Helper functions
+      const addSectionHeader = (text) => {
+        y = ensurePageSpace(doc, y, 25, margin)
+        doc.setFillColor(241, 245, 249) // Light slate background
+        doc.roundedRect(margin, y - 5, maxWidth, 20, 2, 2, 'F')
+        doc.setFont('helvetica', 'bold')
+        doc.setFontSize(13)
+        doc.setTextColor(15, 23, 42) // Slate 900
+        doc.text(text, margin + 8, y + 10)
+        y += 25
+        doc.setTextColor(0, 0, 0)
       }
 
-      const addParagraph = (text) => {
+      const addParagraph = (text, indent = 0) => {
         if (!text) return
         doc.setFont('helvetica', 'normal')
         doc.setFontSize(11)
-        const lines = doc.splitTextToSize(text, maxWidth)
+        doc.setTextColor(30, 41, 59) // Slate 800
+        const lines = doc.splitTextToSize(text, maxWidth - indent)
         for (const line of lines) {
-          y = ensurePageSpace(doc, y, 14, margin)
-          doc.text(line, margin, y)
-          y += 14
+          y = ensurePageSpace(doc, y, 16, margin)
+          doc.text(line, margin + indent, y)
+          y += 16
         }
+        y += 4 // Extra spacing after paragraph
       }
 
       const addBullets = (items) => {
         if (!items || items.length === 0) return
         doc.setFont('helvetica', 'normal')
         doc.setFontSize(11)
-        for (const it of items) {
-          const textLines = doc.splitTextToSize(it, maxWidth - 16)
-          y = ensurePageSpace(doc, y, 14 * textLines.length, margin)
-          doc.text('•', margin, y)
-          doc.text(textLines, margin + 12, y)
-          y += 14 * textLines.length
+        doc.setTextColor(30, 41, 59)
+        for (const item of items) {
+          const bulletIndent = 15
+          const textLines = doc.splitTextToSize(item, maxWidth - bulletIndent - 5)
+          y = ensurePageSpace(doc, y, 16 * textLines.length + 4, margin)
+          
+          // Draw bullet point
+          doc.setFillColor(59, 130, 246) // Blue bullet
+          doc.circle(margin + 5, y - 3, 2, 'F')
+          
+          doc.text(textLines, margin + bulletIndent, y)
+          y += 16 * textLines.length + 4
         }
       }
 
-      // Title + metadata
-      doc.setFont('helvetica', 'bold')
-      doc.setFontSize(16)
-      doc.text('AI Summary', margin, y)
-      y += 24
-      doc.setFont('helvetica', 'normal')
-      doc.setFontSize(10)
-      const ts = new Date().toLocaleString()
-      let metaLine = `Patient: ${patientId}`
-      doc.text(metaLine, margin, y)
-      if (chiefComplaint) {
-        doc.text(`Chief Complaint: ${chiefComplaint}`, margin + 220, y)
-      }
-      y += 16
-      doc.text(`Generated: ${ts}`, margin, y)
-      y += 20
-
-      // Parse summary into sections
-      const raw = summary || ''
-      const lines = raw.split(/\r?\n/)
-      let section = ''
-      let mainStory = ''
-      const keyFindings = []
-      const evolution = []
-      const labRows = []
-      for (let i = 0; i < lines.length; i++) {
-        const ln = lines[i]
-        const t = ln.trim()
-        if (/^Main Story\s*:/.test(t)) { section = 'main'; continue }
-        if (/^Key Findings\s*:/.test(t)) { section = 'key'; continue }
-        if (/^Lab Values\s*:/.test(t)) { section = 'labs'; continue }
-        if (/^Evolution\s*:/.test(t)) { section = 'evol'; continue }
-        if (!t) continue
-        if (section === 'main') {
-          if (t.startsWith('- ')) {
-            mainStory = t.slice(2)
-          } else {
-            mainStory = (mainStory ? mainStory + ' ' : '') + t
-          }
-        } else if (section === 'key') {
-          keyFindings.push(t.replace(/^\-\s*/, ''))
-        } else if (section === 'evol') {
-          evolution.push(t.replace(/^\-\s*/, ''))
-        } else if (section === 'labs') {
-          if (t.startsWith('|') && t.endsWith('|') && !/\|\s*-+\s*\|/.test(t)) {
-            const cells = t.split('|').map(s => s.trim()).filter(Boolean)
-            if (cells.length >= 4) labRows.push(cells.slice(0, 4))
-          }
-        }
-      }
-
-      // Render summary sections
-      if (mainStory) {
-        addHeading('Main Story')
-        addParagraph(mainStory)
-      }
-      if (keyFindings.length) {
-        addHeading('Key Findings')
-        addBullets(keyFindings)
-      }
-      if (labRows.length) {
-        addHeading('Lab Values')
-        // Render as simple fixed columns using monospace
-        doc.setFont('courier', 'normal')
+      const addTable = (rows, headers) => {
+        if (!rows || rows.length === 0) return
+        
+        const colWidths = [80, 200, 120, 100]
+        const rowHeight = 20
+        const headerHeight = 24
+        
+        y = ensurePageSpace(doc, y, headerHeight + rowHeight * Math.min(rows.length, 3), margin)
+        
+        // Table header
+        doc.setFillColor(37, 99, 235) // Blue header
+        doc.rect(margin, y, maxWidth, headerHeight, 'F')
+        doc.setFont('helvetica', 'bold')
         doc.setFontSize(10)
-        const cols = [100, 180, 120, 80]
-        const totalCols = cols.reduce((a, b) => a + b, 0)
-        const scale = Math.min(1, (maxWidth) / totalCols)
-        const cw = cols.map(w => w * scale)
-        const headers = ['Date', 'Test', 'Value', 'Flag']
-        y = ensurePageSpace(doc, y, 16, margin)
-        let x = margin
-        doc.setFont('courier', 'bold')
-        headers.forEach((h, i) => { doc.text(h, x, y); x += cw[i] })
-        doc.setFont('courier', 'normal')
-        y += 10
-        for (const row of labRows) {
-          y = ensurePageSpace(doc, y, 14, margin)
-          let xx = margin
-          row.forEach((cell, i) => {
-            const clipped = String(cell)
-            doc.text(clipped, xx, y)
-            xx += cw[i]
-          })
-          y += 14
-        }
-        doc.setFont('helvetica', 'normal')
-      }
-      if (evolution.length) {
-        addHeading('Evolution')
-        addBullets(evolution)
-      }
-
-      // Evidence Sources
-      if (citations && citations.length) {
-        addHeading(`Evidence Sources (${citations.length})`)
-        doc.setFont('helvetica', 'normal')
-        doc.setFontSize(10)
-        citations.forEach((c, idx) => {
-          const meta = c.source_metadata || {}
-          const page = meta.page ?? meta.page_number ?? '—'
-          const reportId = meta.report_id ?? c.report_id
-          const report = reports.find(r => r.report_id === reportId)
-          const label = report ? report.filename : (reportId ? `report ${reportId}` : 'unknown report')
-          const line = `• ${label}, page ${page} — ${c.source_text_preview || ''}`
-          const wrapped = doc.splitTextToSize(line, maxWidth)
-          for (const ln2 of wrapped) {
-            y = ensurePageSpace(doc, y, 14, margin)
-            doc.text(ln2, margin, y)
-            y += 14
-          }
+        doc.setTextColor(255, 255, 255)
+        
+        let xPos = margin + 8
+        headers.forEach((header, i) => {
+          doc.text(header, xPos, y + headerHeight / 2 + 3)
+          xPos += colWidths[i]
         })
+        
+        y += headerHeight
+        doc.setTextColor(0, 0, 0)
+        doc.setFont('helvetica', 'normal')
+        doc.setFontSize(10)
+        
+        // Table rows with alternating colors
+        rows.forEach((row, rowIdx) => {
+          y = ensurePageSpace(doc, y, rowHeight, margin)
+          
+          if (rowIdx % 2 === 0) {
+            doc.setFillColor(248, 250, 252) // Light background for even rows
+            doc.rect(margin, y, maxWidth, rowHeight, 'F')
+          }
+          
+          xPos = margin + 8
+          row.forEach((cell, i) => {
+            const cellText = String(cell || '—')
+            // Highlight abnormal flags
+            if (i === 3 && (cellText.includes('High') || cellText.includes('Low') || cellText.includes('Loss'))) {
+              doc.setTextColor(220, 38, 38) // Red for abnormal
+              doc.setFont('helvetica', 'bold')
+            } else if (i === 3 && cellText.includes('Normal')) {
+              doc.setTextColor(22, 163, 74) // Green for normal
+            }
+            
+            doc.text(cellText, xPos, y + rowHeight / 2 + 3)
+            doc.setTextColor(0, 0, 0)
+            doc.setFont('helvetica', 'normal')
+            xPos += colWidths[i]
+          })
+          
+          y += rowHeight
+        })
+        
+        y += 10 // Spacing after table
       }
 
-      // Save
+      // Parse summary content - handle multiple header formats
+      const raw = summary || ''
+      console.log('PDF Debug - Raw summary:', raw.substring(0, 500))
+      
+      const lines = raw.split(/\r?\n/)
+      const sections = {}
+      let currentSection = ''
+      let currentContent = []
+      
+      for (const line of lines) {
+        const trimmed = line.trim()
+        
+        // Detect section headers in multiple formats:
+        // 1. ## Markdown headers
+        // 2. **Bold** headers
+        // 3. Plain "Section Name:" format
+        
+        if (trimmed.startsWith('##')) {
+          // ## Markdown header
+          if (currentSection && currentContent.length > 0) {
+            sections[currentSection] = currentContent.join('\n')
+          }
+          currentSection = trimmed.replace(/^##\s*/, '').trim()
+          currentContent = []
+        } else if (/^\*\*[A-Z][A-Za-z\s&]+\*\*$/.test(trimmed)) {
+          // **Bold Header** format
+          if (currentSection && currentContent.length > 0) {
+            sections[currentSection] = currentContent.join('\n')
+          }
+          currentSection = trimmed.replace(/^\*\*|\*\*$/g, '').trim()
+          currentContent = []
+        } else if (/^[A-Z][A-Za-z\s&]+:$/.test(trimmed)) {
+          // Plain format: "Main Story:" or "Key Findings:"
+          if (currentSection && currentContent.length > 0) {
+            sections[currentSection] = currentContent.join('\n')
+          }
+          currentSection = trimmed.replace(/:$/, '').trim()
+          currentContent = []
+        } else if (trimmed) {
+          currentContent.push(trimmed)
+        }
+      }
+      
+      if (currentSection && currentContent.length > 0) {
+        sections[currentSection] = currentContent.join('\n')
+      }
+      
+      console.log('PDF Debug - Parsed sections:', Object.keys(sections))
+
+      // If no sections found, treat entire summary as one block
+      if (Object.keys(sections).length === 0 && raw.trim()) {
+        sections['Clinical Summary'] = raw.trim()
+      }
+
+      // Render sections in professional order
+      const sectionOrder = [
+        'Patient Background & Presentation',
+        'Main Story',
+        'Initial Diagnosis & Assessment',
+        'Key Findings',
+        'Lab Values',
+        'Intervention Timeline',
+        'Progress & Evolution',
+        'Progress & Current Status',
+        'Current Status & Functional Impact',
+        'Context',
+        'Evolution',
+        'Recommendations & Next Steps',
+        'Clinical Summary' // Fallback
+      ]
+
+      for (const sectionTitle of sectionOrder) {
+        const content = sections[sectionTitle]
+        if (!content || !content.trim()) continue
+        
+        console.log(`PDF Debug - Rendering section: ${sectionTitle}`)
+        addSectionHeader(sectionTitle)
+        
+        // Parse section content
+        const sectionLines = content.split('\n').filter(l => l.trim())
+        const bullets = []
+        const tableRows = []
+        let paragraph = ''
+        let inTable = false
+        
+        for (const line of sectionLines) {
+          const trimmed = line.trim()
+          
+          // Table detection
+          if (trimmed.startsWith('|') && trimmed.endsWith('|')) {
+            // Check if this is a separator row (all cells are just dashes/hyphens)
+            const isSeparatorRow = /^\|[\s\-|]+\|$/.test(trimmed) && !trimmed.includes(' ')
+            
+            if (!isSeparatorRow) {
+              const cells = trimmed.split('|').map(s => s.trim()).filter(Boolean)
+              console.log(`PDF Debug - Table row parsed:`, cells)
+              if (cells.length >= 3) {
+                tableRows.push(cells.slice(0, 4))
+                inTable = true
+              }
+            } else {
+              console.log(`PDF Debug - Skipping separator row:`, trimmed)
+            }
+            continue
+          }
+          
+          // Bullet points
+          if (trimmed.startsWith('- ') || trimmed.startsWith('* ')) {
+            bullets.push(trimmed.replace(/^[-*]\s*/, ''))
+          } else if (!inTable) {
+            paragraph += (paragraph ? ' ' : '') + trimmed
+          }
+        }
+        
+        // Render content
+        if (paragraph) {
+          console.log(`PDF Debug - Adding paragraph: ${paragraph.substring(0, 100)}`)
+          addParagraph(paragraph, 5)
+        }
+        if (bullets.length > 0) {
+          console.log(`PDF Debug - Adding ${bullets.length} bullets`)
+          addBullets(bullets)
+        }
+        if (tableRows.length > 0) {
+          console.log(`PDF Debug - Adding table with ${tableRows.length} rows`, tableRows)
+          
+          // Check if first row looks like headers (contains words like Date, Test, Value, Flag)
+          const firstRow = tableRows[0].map(c => c.toLowerCase())
+          const isHeaderRow = firstRow.some(cell => 
+            ['date', 'test', 'value', 'flag', 'time', 'result'].includes(cell)
+          )
+          
+          let headers, dataRows
+          if (isHeaderRow) {
+            // First row is headers, rest are data
+            headers = tableRows[0]
+            dataRows = tableRows.slice(1)
+          } else {
+            // No header row, use default headers and all rows are data
+            headers = ['Date', 'Test', 'Value', 'Flag']
+            dataRows = tableRows
+          }
+          
+          console.log(`PDF Debug - Headers:`, headers, `Data rows:`, dataRows.length)
+          
+          if (dataRows.length > 0) {
+            addTable(dataRows, headers)
+          }
+        }
+      }
+
+      // Footer on last page
+      const addFooter = () => {
+        doc.setFontSize(8)
+        doc.setTextColor(150, 150, 150)
+        doc.text('This document is AI-generated. Verify all clinical decisions with source records.', 
+          margin, pageHeight - 20)
+        doc.text(`Page ${doc.internal.getCurrentPageInfo().pageNumber}`, 
+          pageWidth - margin - 30, pageHeight - 20)
+      }
+      
+      addFooter()
+
+      // Save with professional filename
       const pad = (n) => String(n).padStart(2, '0')
       const d = new Date()
-      const fname = `Summary_${patientId}_${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}.pdf`
+      const fname = `SummAID_Clinical_Summary_Patient_${patientId}_${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}.pdf`
       doc.save(fname)
     } catch (e) {
       console.error('PDF generation error', e)
