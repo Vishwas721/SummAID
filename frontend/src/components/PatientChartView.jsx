@@ -466,36 +466,43 @@ export function PatientChartView({ patientId }) {
       doc.setFont('helvetica', 'normal')
       doc.text('Clinical Summary Report', margin, 48)
       
-      // Patient info box
+      // Patient info box - adjust height based on content
       y = 80
+      const boxHeight = chiefComplaint ? 70 : 55
       doc.setTextColor(0, 0, 0)
       doc.setDrawColor(200, 200, 200)
       doc.setLineWidth(1)
-      doc.roundedRect(margin, y, maxWidth, 50, 3, 3, 'S')
+      doc.roundedRect(margin, y, maxWidth, boxHeight, 3, 3, 'S')
       
+      // Patient ID (left side)
       doc.setFont('helvetica', 'bold')
       doc.setFontSize(11)
       doc.text('Patient ID:', margin + 10, y + 20)
       doc.setFont('helvetica', 'normal')
       doc.text(String(patientId), margin + 80, y + 20)
       
-      if (chiefComplaint) {
-        doc.setFont('helvetica', 'bold')
-        doc.text('Chief Complaint:', margin + 10, y + 38)
-        doc.setFont('helvetica', 'normal')
-        const ccText = doc.splitTextToSize(chiefComplaint, maxWidth - 130)
-        doc.text(ccText, margin + 120, y + 38)
-      }
-      
+      // Generated timestamp (right side, aligned properly)
       const ts = new Date().toLocaleDateString('en-US', { 
-        year: 'numeric', month: 'long', day: 'numeric',
+        year: 'numeric', month: 'short', day: 'numeric',
         hour: '2-digit', minute: '2-digit'
       })
       doc.setFontSize(9)
       doc.setTextColor(100, 100, 100)
-      doc.text(`Generated: ${ts}`, pageWidth - margin - 150, y + 20)
+      const tsWidth = doc.getTextWidth(`Generated: ${ts}`)
+      doc.text(`Generated: ${ts}`, margin + maxWidth - tsWidth - 10, y + 20)
+      doc.setTextColor(0, 0, 0)
       
-      y += 70
+      // Chief Complaint (below, if exists)
+      if (chiefComplaint) {
+        doc.setFont('helvetica', 'bold')
+        doc.setFontSize(11)
+        doc.text('Chief Complaint:', margin + 10, y + 42)
+        doc.setFont('helvetica', 'normal')
+        const ccText = doc.splitTextToSize(chiefComplaint, maxWidth - 130)
+        doc.text(ccText, margin + 120, y + 42)
+      }
+      
+      y += boxHeight + 20
       doc.setTextColor(0, 0, 0)
 
       // Helper functions
