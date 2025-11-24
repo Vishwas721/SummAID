@@ -90,6 +90,12 @@ export function PatientChartView({ patientId }) {
     setSelectionPosition(null)
     setShowAnnotationModal(false)
     
+    // Clear PDF cache and state
+    pageCacheRef.current.clear()
+    setPageImage(null)
+    setReports([])
+    setSelectedReportId(null)
+    
     // For doctor, fetch persisted summary instead of generating
     if (userRole === 'DOCTOR' && patientId) {
       fetchPersistedSummary()
@@ -99,6 +105,7 @@ export function PatientChartView({ patientId }) {
   // Fetch reports when patientId changes
   useEffect(() => {
     if (!patientId) return
+    
   const fetchReports = async () => {
       setLoadingReports(true)
       setPdfError(null)
@@ -849,7 +856,7 @@ export function PatientChartView({ patientId }) {
                     <img src={pageImage} alt={`Page ${pageNumber}`} className="block max-w-full h-auto" />
                   ) : (
                     <Document
-                      key={activeCitationId || 'default'}
+                      key={`${patientId}-${selectedReportId}-${activeCitationId || 'default'}`}
                       file={pdfUrl}
                       onLoadSuccess={onDocumentLoadSuccess}
                       onLoadError={onDocumentLoadError}
