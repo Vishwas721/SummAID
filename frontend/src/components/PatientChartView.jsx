@@ -647,7 +647,8 @@ export function PatientChartView({ patientId }) {
     if (canvases && canvases[0]) {
       try {
         const dataUrl = canvases[0].toDataURL('image/png')
-        pageCacheRef.current.set(pageNumber, dataUrl)
+        const key = `${selectedReportId}-${pageNumber}`
+        pageCacheRef.current.set(key, dataUrl)
         setPageImage(dataUrl)
       } catch {}
     }
@@ -661,10 +662,12 @@ export function PatientChartView({ patientId }) {
       setPageImage(null)
       return
     }
+    
+    const key = `${selectedReportId}-${pageNumber}`
     // If cached, use image immediately
-    if (pageCacheRef.current.has(pageNumber)) {
+    if (pageCacheRef.current.has(key)) {
       console.log('Using CACHED image for page', pageNumber)
-      setPageImage(pageCacheRef.current.get(pageNumber))
+      setPageImage(pageCacheRef.current.get(key))
     } else {
       console.log('No cache - will render PDF for page', pageNumber)
       setPageImage(null)
