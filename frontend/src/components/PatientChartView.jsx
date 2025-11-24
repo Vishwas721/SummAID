@@ -647,13 +647,22 @@ export function PatientChartView({ patientId }) {
   }
 
   useEffect(() => {
+    console.log('useEffect - activeCitationText:', activeCitationText ? 'YES' : 'NO', 'pageNumber:', pageNumber)
+    // Disable cache when highlighting active citation to show text layer
+    if (activeCitationText) {
+      console.log('Setting pageImage to NULL to force text layer render')
+      setPageImage(null)
+      return
+    }
     // If cached, use image immediately
     if (pageCacheRef.current.has(pageNumber)) {
+      console.log('Using CACHED image for page', pageNumber)
       setPageImage(pageCacheRef.current.get(pageNumber))
     } else {
+      console.log('No cache - will render PDF for page', pageNumber)
       setPageImage(null)
     }
-  }, [pageNumber, selectedReportId])
+  }, [pageNumber, selectedReportId, activeCitationText])
 
   // MA View - Simplified
   if (userRole === 'MA') {
@@ -805,6 +814,8 @@ export function PatientChartView({ patientId }) {
                     onClick={() => {
                       setSelectedReportId(r.report_id)
                       setPageNumber(1)
+                      setActiveCitationId(null)
+                      setActiveCitationText('')
                     }}
                     className={cn(
                       "text-xs px-3 py-1.5 rounded-lg border transition-all duration-200 font-medium",
@@ -838,6 +849,7 @@ export function PatientChartView({ patientId }) {
                     <img src={pageImage} alt={`Page ${pageNumber}`} className="block max-w-full h-auto" />
                   ) : (
                     <Document
+                      key={activeCitationId || 'default'}
                       file={pdfUrl}
                       onLoadSuccess={onDocumentLoadSuccess}
                       onLoadError={onDocumentLoadError}
@@ -853,13 +865,28 @@ export function PatientChartView({ patientId }) {
                         renderTextLayer={true}
                         renderAnnotationLayer={true}
                         onRenderError={onPageRenderError}
-                        onRenderSuccess={capturePageCanvas}
+                        onRenderSuccess={(page) => {
+                          console.log('Page rendered - activeCitationText:', activeCitationText ? 'YES' : 'NO')
+                          if (!activeCitationText) {
+                            capturePageCanvas(page)
+                          }
+                        }}
                         customTextRenderer={({ str }) => {
-                          if (!activeCitationText) return str
+                          console.log('customTextRenderer called - str length:', str?.length || 0, 'activeCitationText:', activeCitationText ? 'YES' : 'NO')
+                          if (!activeCitationText || !str) return str
                           const lower = str.toLowerCase()
                           const trimmed = lower.trim()
-                          if (trimmed.length > 2 && activeCitationText.includes(trimmed)) {
-                            return `<mark style="background:rgba(250, 204, 21, 0.4);padding:2px 4px;border-radius:2px;border-bottom:2px solid rgba(251, 191, 36, 0.8);color:inherit;font-weight:inherit;">${str}</mark>`
+                          // Match individual words/tokens from the citation - more flexible
+                          if (trimmed.length > 3) {
+                            // Split citation into significant words
+                            const citationWords = activeCitationText.split(/\s+/).filter(w => w.length > 3)
+                            const strWords = trimmed.split(/\s+/).filter(w => w.length > 3)
+                            // Highlight if any significant word from this chunk appears in citation
+                            const hasMatch = strWords.some(word => citationWords.includes(word))
+                            if (hasMatch) {
+                              console.log('HIGHLIGHTING:', trimmed.substring(0, 50))
+                              return `<mark style="background:rgba(250, 204, 21, 0.4);padding:2px 4px;border-radius:2px;border-bottom:2px solid rgba(251, 191, 36, 0.8);color:inherit;font-weight:inherit;">${str}</mark>`
+                            }
                           }
                           return str
                         }}
@@ -1096,10 +1123,15 @@ export function PatientChartView({ patientId }) {
                           const isActive = id === activeCitationId
                           const goToSource = () => {
                             if (!reportId) return
+                            const fullText = (c.source_full_text || c.source_text_preview || '').toLowerCase()
+                            console.log('Citation clicked - text length:', fullText.length, 'preview:', fullText.substring(0, 100))
+                            // Clear cache to force fresh render with text layer
+                            pageCacheRef.current.clear()
+                            // Set citation data - useEffect will handle pageImage
                             if (reportId !== selectedReportId) setSelectedReportId(reportId)
                             setPageNumber(Math.max(1, parseInt(page, 10) || 1))
                             setActiveCitationId(id)
-                            setActiveCitationText((c.source_full_text || c.source_text_preview || '').toLowerCase())
+                            setActiveCitationText(fullText)
                           }
                           const toggle = () => {
                             setExpandedCitationIds(prev => { const next = new Set(prev); next.has(id) ? next.delete(id) : next.add(id); return next })
