@@ -1442,6 +1442,29 @@ export function PatientChartView({ patientId }) {
                   </span>
                 )}
               </div>
+              
+              {/* List of specific annotations */}
+              {annotations.length > 0 && (
+                <details className="mb-3 group">
+                  <summary className="text-[10px] font-medium text-slate-500 uppercase tracking-wider cursor-pointer hover:text-slate-700 dark:hover:text-slate-300 flex items-center gap-1 mb-1 select-none">
+                    <ChevronRight className="h-3 w-3 transition-transform group-open:rotate-90" />
+                    Specific Annotations ({annotations.length})
+                  </summary>
+                  <div className="space-y-2 max-h-32 overflow-y-auto pr-1 pl-2 mt-1">
+                    {annotations.map((ann, idx) => (
+                      <div key={idx} className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded p-2 text-xs">
+                        <div className="font-medium text-slate-700 dark:text-slate-300 mb-1 border-l-2 border-yellow-400 pl-2 italic">
+                          "{ann.selected_text}"
+                        </div>
+                        <div className="text-slate-600 dark:text-slate-400 pl-2">
+                          {ann.doctor_note || ann.note}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </details>
+              )}
+
               {noteError && (
                 <div className="mb-2 p-2 bg-red-50 dark:bg-red-900/20 border border-red-300 dark:border-red-800 rounded text-xs text-red-700 dark:text-red-300 flex items-start gap-2">
                   <AlertTriangle className="h-3 w-3 flex-shrink-0 mt-0.5" />
