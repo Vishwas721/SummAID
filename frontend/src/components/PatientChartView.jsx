@@ -603,83 +603,89 @@ export function PatientChartView({ patientId }) {
         y += 10 // Spacing after table
       }
 
-      // Parse summary content - handle multiple header formats
+      // Parse summary content - handle ALL possible header formats
       const raw = summary || ''
       console.log('PDF Debug - Raw summary:', raw.substring(0, 500))
       
       const lines = raw.split(/\r?\n/)
-      const sections = {}
-      let currentSection = ''
+      const sections = []
+      let currentSection = null
       let currentContent = []
       
-      for (const line of lines) {
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i]
         const trimmed = line.trim()
         
-        // Detect section headers in multiple formats:
-        // 1. ## Markdown headers
-        // 2. **Bold** headers
-        // 3. Plain "Section Name:" format
+        // Skip empty lines
+        if (!trimmed) {
+          continue
+        }
         
+        // Detect section headers in multiple formats:
+        let isHeader = false
+        let headerText = ''
+        
+        // 1. ## Markdown headers
         if (trimmed.startsWith('##')) {
-          // ## Markdown header
+          isHeader = true
+          headerText = trimmed.replace(/^##\s*/, '').trim()
+        }
+        // 2. **Bold** headers (standalone on their own line)
+        else if (/^\*\*[A-Z].+\*\*$/.test(trimmed)) {
+          isHeader = true
+          headerText = trimmed.replace(/^\*\*|\*\*$/g, '').trim()
+        }
+        // 3. Plain "Section Name:" format
+        else if (/^[A-Z][A-Za-z\s&,'()-]+:\s*$/.test(trimmed)) {
+          isHeader = true
+          headerText = trimmed.replace(/:$/, '').trim()
+        }
+        // 4. ALL CAPS headers (like "KEY FINDINGS" or "LAB VALUES")
+        else if (/^[A-Z][A-Z\s&'()-]+$/.test(trimmed) && trimmed.length > 3 && !trimmed.includes('|')) {
+          isHeader = true
+          headerText = trimmed
+        }
+        
+        if (isHeader) {
+          // Save previous section
           if (currentSection && currentContent.length > 0) {
-            sections[currentSection] = currentContent.join('\n')
+            sections.push({
+              title: currentSection,
+              content: currentContent.join('\n')
+            })
           }
-          currentSection = trimmed.replace(/^##\s*/, '').trim()
+          currentSection = headerText
           currentContent = []
-        } else if (/^\*\*[A-Z][A-Za-z\s&]+\*\*$/.test(trimmed)) {
-          // **Bold Header** format
-          if (currentSection && currentContent.length > 0) {
-            sections[currentSection] = currentContent.join('\n')
-          }
-          currentSection = trimmed.replace(/^\*\*|\*\*$/g, '').trim()
-          currentContent = []
-        } else if (/^[A-Z][A-Za-z\s&]+:$/.test(trimmed)) {
-          // Plain format: "Main Story:" or "Key Findings:"
-          if (currentSection && currentContent.length > 0) {
-            sections[currentSection] = currentContent.join('\n')
-          }
-          currentSection = trimmed.replace(/:$/, '').trim()
-          currentContent = []
-        } else if (trimmed) {
+        } else {
           currentContent.push(trimmed)
         }
       }
       
+      // Save last section
       if (currentSection && currentContent.length > 0) {
-        sections[currentSection] = currentContent.join('\n')
+        sections.push({
+          title: currentSection,
+          content: currentContent.join('\n')
+        })
       }
       
-      console.log('PDF Debug - Parsed sections:', Object.keys(sections))
+      console.log('PDF Debug - Parsed sections:', sections.map(s => s.title))
 
       // If no sections found, treat entire summary as one block
-      if (Object.keys(sections).length === 0 && raw.trim()) {
-        sections['Clinical Summary'] = raw.trim()
+      if (sections.length === 0 && raw.trim()) {
+        sections.push({
+          title: 'Clinical Summary',
+          content: raw.trim()
+        })
       }
 
-      // Render sections in professional order
-      const sectionOrder = [
-        'Patient Background & Presentation',
-        'Main Story',
-        'Initial Diagnosis & Assessment',
-        'Key Findings',
-        'Lab Values',
-        'Intervention Timeline',
-        'Progress & Evolution',
-        'Progress & Current Status',
-        'Current Status & Functional Impact',
-        'Context',
-        'Evolution',
-        'Recommendations & Next Steps',
-        'Clinical Summary' // Fallback
-      ]
-
-      for (const sectionTitle of sectionOrder) {
-        const content = sections[sectionTitle]
+      // Render all sections in order (they're already in document order)
+      for (const section of sections) {
+        const { title, content } = section
         if (!content || !content.trim()) continue
         
-        console.log(`PDF Debug - Rendering section: ${sectionTitle}`)
-        addSectionHeader(sectionTitle)
+        console.log(`PDF Debug - Rendering section: ${title}`)
+        addSectionHeader(title)
         
         // Parse section content
         const sectionLines = content.split('\n').filter(l => l.trim())
