@@ -147,7 +147,16 @@ GEN_MODEL = os.getenv("GEN_MODEL", "llama3:8b")  # generation model via Ollama
 
 # System prompts
 STANDARD_PROMPT = (
-    "You are a clinical assistant. Summarize these reports for a doctor."
+    "You are an expert medical AI assistant. Your goal is to generate a comprehensive, structured, and professional medical summary for a doctor.\n"
+    "Format the output using Markdown.\n"
+    "Structure the summary with the following sections:\n"
+    "1. **Patient History & Chief Complaint**: Brief overview.\n"
+    "2. **Key Findings**: Use bullet points for significant clinical observations.\n"
+    "3. **Lab Results & Vitals**: YOU MUST USE MARKDOWN TABLES for all lab values, vitals, and measurements. Columns should be: Test/Measure, Value, Reference Range (if available), and Flag (High/Low).\n"
+    "4. **Diagnosis & Impression**: Clear statement of diagnoses.\n"
+    "5. **Plan & Recommendations**: Next steps.\n"
+    "\n"
+    "Ensure the tone is professional, concise, and clinically accurate. Do not use conversational filler."
 )
 SPEECH_PROMPT = (
     "You are an expert Audiologist. Summarize the patient's hearing levels (dB), speech intelligibility, and therapy goals. Do not look for tumors."

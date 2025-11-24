@@ -8,6 +8,8 @@ import { PanelGroup, Panel, PanelResizeHandle } from 'react-resizable-panels'
 import { FileText, Sparkles, AlertTriangle, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Loader2, Eye, EyeOff, MessageSquare, Send, CheckCircle2, Plus, X } from 'lucide-react'
 import { cn } from '../lib/utils'
 import Highlighter from 'react-highlight-words'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 
 // Configure PDF.js worker - use local build from node_modules
 pdfjs.GlobalWorkerOptions.workerSrc = new URL(
@@ -1083,14 +1085,40 @@ export function PatientChartView({ patientId }) {
                   )}
                   {!generating && summary && (
                     <div className="prose prose-sm dark:prose-invert max-w-none relative">
-                      <div ref={summaryRef} onMouseUp={handleTextSelection} className="text-sm leading-relaxed text-slate-700 dark:text-slate-300 whitespace-pre-wrap select-text">
-                        <Highlighter
-                          searchWords={annotations.filter(a => a.selected_text).map(a => a.selected_text)}
-                          autoEscape={true}
-                          textToHighlight={summary}
-                          highlightClassName="bg-yellow-200 dark:bg-yellow-700 cursor-pointer"
-                          highlightStyle={{ backgroundColor: '#fef08a', padding: '2px 0' }}
-                        />
+                      <div ref={summaryRef} onMouseUp={handleTextSelection} className="select-text">
+                        <ReactMarkdown
+                          remarkPlugins={[remarkGfm]}
+                          components={{
+                            h1: ({ children }) => <h1 className="text-2xl font-bold text-slate-900 dark:text-slate-100 mb-4 mt-6 pb-2 border-b-2 border-blue-500">{children}</h1>,
+                            h2: ({ children }) => <h2 className="text-xl font-semibold text-slate-800 dark:text-slate-200 mb-3 mt-5 flex items-center gap-2"><span className="inline-block w-1 h-6 bg-blue-500 rounded"></span>{children}</h2>,
+                            h3: ({ children }) => <h3 className="text-lg font-medium text-slate-700 dark:text-slate-300 mb-2 mt-4">{children}</h3>,
+                            p: ({ children }) => <p className="mb-3 text-sm leading-relaxed text-slate-700 dark:text-slate-300">{children}</p>,
+                            ul: ({ children }) => <ul className="mb-4 space-y-1.5 ml-4">{children}</ul>,
+                            ol: ({ children }) => <ol className="mb-4 space-y-1.5 ml-4 list-decimal">{children}</ol>,
+                            li: ({ children }) => <li className="text-sm text-slate-700 dark:text-slate-300 leading-relaxed pl-1">{children}</li>,
+                            strong: ({ children }) => <strong className="font-semibold text-slate-900 dark:text-slate-100">{children}</strong>,
+                            em: ({ children }) => <em className="italic text-slate-600 dark:text-slate-400">{children}</em>,
+                            table: ({ children }) => (
+                              <div className="overflow-x-auto my-6 shadow-md rounded-lg border border-slate-200 dark:border-slate-700">
+                                <table className="min-w-full divide-y divide-slate-300 dark:divide-slate-600">
+                                  {children}
+                                </table>
+                              </div>
+                            ),
+                            thead: ({ children }) => <thead className="bg-gradient-to-r from-blue-50 to-indigo-50 dark:from-slate-800 dark:to-slate-700">{children}</thead>,
+                            tbody: ({ children }) => <tbody className="bg-white dark:bg-slate-800 divide-y divide-slate-200 dark:divide-slate-700">{children}</tbody>,
+                            tr: ({ children }) => <tr className="hover:bg-slate-50 dark:hover:bg-slate-750 transition-colors">{children}</tr>,
+                            th: ({ children }) => <th className="px-4 py-3 text-left text-xs font-semibold text-slate-700 dark:text-slate-300 uppercase tracking-wider border-r border-slate-200 dark:border-slate-600 last:border-r-0">{children}</th>,
+                            td: ({ children }) => <td className="px-4 py-3 text-sm text-slate-700 dark:text-slate-300 border-r border-slate-100 dark:border-slate-700 last:border-r-0">{children}</td>,
+                            blockquote: ({ children }) => <blockquote className="border-l-4 border-blue-500 bg-blue-50 dark:bg-blue-900/20 pl-4 py-2 my-4 italic text-slate-700 dark:text-slate-300">{children}</blockquote>,
+                            code: ({ children, inline }) => 
+                              inline 
+                                ? <code className="bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded text-xs font-mono text-rose-600 dark:text-rose-400">{children}</code>
+                                : <code className="block bg-slate-100 dark:bg-slate-800 p-3 rounded-md text-xs font-mono overflow-x-auto">{children}</code>
+                          }}
+                        >
+                          {summary}
+                        </ReactMarkdown>
                       </div>
                       {selectedText && selectionPosition && (
                         <div className="fixed z-50 animate-in fade-in duration-200" style={{ top: `${selectionPosition.top + 5}px`, left: `${selectionPosition.left}px`, transform: 'translateX(-50%)' }}>
