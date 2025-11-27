@@ -6,7 +6,9 @@ CREATE EXTENSION IF NOT EXISTS vector;
 CREATE TABLE patients (
     patient_id SERIAL PRIMARY KEY,
     patient_demo_id TEXT UNIQUE NOT NULL,  -- Non-PHI identifier (e.g., "patient_jane_doe")
-    patient_display_name TEXT NOT NULL     -- Display name (e.g., "Jane Doe")
+    patient_display_name TEXT NOT NULL,    -- Display name (e.g., "Jane Doe")
+    age INT NULL,                          -- Age (demo data; non-PHI)
+    sex TEXT NULL                          -- Sex ("M", "F", or "Unknown")
 );
 
 -- Create reports table with FK to patients

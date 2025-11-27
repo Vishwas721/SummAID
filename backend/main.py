@@ -64,6 +64,15 @@ def ensure_summary_support():
             cur.execute("ALTER TABLE patients ADD COLUMN IF NOT EXISTS chart_prepared_at TIMESTAMP NULL")
         except Exception as e:
             logger.warning(f"chart_prepared_at alter warning: {e}")
+        # Add demographic columns (age, sex) if missing (Task: augment patients schema)
+        try:
+            cur.execute("ALTER TABLE patients ADD COLUMN IF NOT EXISTS age INT NULL")
+        except Exception as e:
+            logger.warning(f"age alter warning (non-fatal): {e}")
+        try:
+            cur.execute("ALTER TABLE patients ADD COLUMN IF NOT EXISTS sex TEXT NULL")
+        except Exception as e:
+            logger.warning(f"sex alter warning (non-fatal): {e}")
         # Create patient_summaries table if missing
         cur.execute("""
             CREATE TABLE IF NOT EXISTS patient_summaries (
@@ -120,7 +129,7 @@ async def get_patients():
         cur = conn.cursor()
         # Query for all patients, sorted by display name
         cur.execute("""
-            SELECT patient_id, patient_display_name
+            SELECT patient_id, patient_display_name, age, sex
             FROM patients
             ORDER BY patient_display_name
         """)
@@ -128,7 +137,9 @@ async def get_patients():
         patients = [
             {
                 "patient_id": r[0],
-                "patient_display_name": r[1]
+                "patient_display_name": r[1],
+                "age": r[2],
+                "sex": r[3]
             }
             for r in rows
         ]

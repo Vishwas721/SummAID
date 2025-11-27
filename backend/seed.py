@@ -243,12 +243,30 @@ def main():
             report_files = info['files']
             display_name = info['display']
             patient_demo_id = f"patient_{patient_key}"
-            
+            # --- Demo demographic assignment (non-PHI) ---
+            # Deterministically assign age & sex for reproducibility.
+            import hashlib
+            lower_name = display_name.lower()
+            male_names = {"john", "rahul", "michael", "david", "robert", "james"}
+            female_names = {"jane", "mary", "susan", "linda", "elizabeth", "anna"}
+            sex = "Unknown"
+            token_first = lower_name.split()[0] if lower_name.split() else lower_name
+            if token_first in male_names:
+                sex = "M"
+            elif token_first in female_names:
+                sex = "F"
+            # Hash-based age (ensure pediatric diversity): map first byte to 4-80
+            hval = int(hashlib.sha256(display_name.encode()).hexdigest()[:2], 16)  # 0-255
+            age = 4 + (hval % 77)  # 4..80
+            # Bias: if name contains pediatric hint, force age < 16
+            if any(k in lower_name for k in ["child", "peds", "pediatric", "kid"]):
+                age = 8
+            # Insert patient with age & sex
             cur.execute("""
-                INSERT INTO patients (patient_demo_id, patient_display_name)
-                VALUES (%s, %s)
+                INSERT INTO patients (patient_demo_id, patient_display_name, age, sex)
+                VALUES (%s, %s, %s, %s)
                 RETURNING patient_id
-            """, (patient_demo_id, display_name))
+            """, (patient_demo_id, display_name, age, sex))
             
             patient_id = cur.fetchone()[0]
             print(f"\nCreated patient: {display_name} (ID: {patient_id}, demo_id: {patient_demo_id})")
