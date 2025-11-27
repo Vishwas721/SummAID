@@ -154,7 +154,8 @@ async def get_patients():
 
 # ---------- Summarization (Skeleton) ----------
 EMBED_MODEL = os.getenv("EMBED_MODEL", "nomic-embed-text")  # 768-dim
-GEN_MODEL = os.getenv("GEN_MODEL", "llama3:8b")  # generation model via Ollama
+# LLM-agnostic model selection now centralized in config.py
+from config import LLM_MODEL_NAME, GENERATION_OPTIONS, FALLBACK_MODELS
 
 # System prompts
 STANDARD_PROMPT = (
@@ -458,7 +459,7 @@ def _generate_summary(context_chunks: List[str], patient_label: str, system_prom
             return False, f"empty:{data}"
         return True, out.strip()
 
-    ok, primary = _try(GEN_MODEL, prompt)
+    ok, primary = _try(LLM_MODEL_NAME, prompt)
     if ok:
         return primary
     lower_err = primary.lower()
@@ -467,13 +468,13 @@ def _generate_summary(context_chunks: List[str], patient_label: str, system_prom
         
         # Try CPU-only mode with original model first
         logger.info("Attempting CPU-only inference...")
-        ok_cpu, res_cpu = _try(GEN_MODEL, prompt, use_cpu=True)
+        ok_cpu, res_cpu = _try(LLM_MODEL_NAME, prompt, use_cpu=True)
         if ok_cpu:
             return res_cpu + "\n(Note: Generated using CPU due to GPU constraints.)"
         
         # Try smaller models
         fallbacks = ["qwen2.5:7b-instruct-q4_K_M", "qwen2.5:3b-instruct-q4_K_M", "llama3.2:3b-instruct-q4_K_M"]
-        for fm in fallbacks:
+        for fm in FALLBACK_MODELS:
             ok2, res2 = _try(fm, prompt)
             if ok2:
                 return res2 + "\n(Note: Smaller model used due to GPU memory constraints.)"
@@ -484,7 +485,7 @@ def _generate_summary(context_chunks: List[str], patient_label: str, system_prom
             reduced_prompt = prompt.replace(f"Context:\n{joined}", f"Context (Reduced Extract):\n{reduced}")
         else:
             reduced_prompt = prompt.replace(joined, reduced)
-        ok3, res3 = _try(GEN_MODEL, reduced_prompt)
+        ok3, res3 = _try(LLM_MODEL_NAME, reduced_prompt)
         if ok3:
             return res3 + "\n(Note: Context reduced due to GPU memory constraints.)"
         raise HTTPException(status_code=500, detail=f"Generation GPU error; all fallbacks failed: {primary}")
@@ -555,7 +556,7 @@ def _answer_question(context_chunks: List[str], question: str) -> str:
             return False, f"empty:{data}" 
         return True, out.strip()
 
-    ok, primary = _try(GEN_MODEL, prompt)
+    ok, primary = _try(LLM_MODEL_NAME, prompt)
     if ok:
         return primary
     
@@ -565,19 +566,19 @@ def _answer_question(context_chunks: List[str], question: str) -> str:
         
         # Try CPU-only mode first
         logger.info("Attempting CPU-only inference for question answering...")
-        ok_cpu, res_cpu = _try(GEN_MODEL, prompt, use_cpu=True)
+        ok_cpu, res_cpu = _try(LLM_MODEL_NAME, prompt, use_cpu=True)
         if ok_cpu:
             return res_cpu + "\n(Note: Generated using CPU due to GPU constraints.)"
         
         fallbacks = ["qwen2.5:7b-instruct-q4_K_M", "qwen2.5:3b-instruct-q4_K_M", "llama3.2:3b-instruct-q4_K_M"]
-        for fm in fallbacks:
+        for fm in FALLBACK_MODELS:
             ok2, res2 = _try(fm, prompt)
             if ok2:
                 return res2 + "\n(Note: Smaller model used due to GPU memory constraints.)"
         # Reduce context aggressively
         reduced = joined[-(MAX_SAFE_CHARS // 2):]
         reduced_prompt = prompt.replace(f"Context (Medical Reports):\n{joined}", f"Context (Reduced Extract):\n{reduced}")
-        ok3, res3 = _try(GEN_MODEL, reduced_prompt)
+        ok3, res3 = _try(LLM_MODEL_NAME, reduced_prompt)
         if ok3:
             return res3 + "\n(Note: Context reduced due to GPU memory constraints.)"
         raise HTTPException(status_code=500, detail=f"Generation GPU error; all fallbacks failed: {primary}")
