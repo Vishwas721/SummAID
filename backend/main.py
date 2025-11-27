@@ -205,57 +205,112 @@ SPEECH_PROMPT = (
     "Keep tone professional and clinically accurate. Avoid conversational filler."
 )
 SPEECH_PROMPT = (
-    "You are an expert Audiologist. Generate a COMPREHENSIVE, LONGITUDINAL audiological summary that tells the patient's STORY across multiple reports.\n\n"
-    "**CRITICAL: ANALYZE ALL REPORTS CHRONOLOGICALLY**\n"
-    "- Read ALL reports from OLDEST to NEWEST\n"
-    "- Track changes over time (diagnosis → intervention → response)\n"
-    "- Document compliance, adherence, and progress\n"
-    "- Show the DYNAMIC nature of the case, not just a static snapshot\n\n"
-    "**FORMATTING RULES:**\n"
-    "- Use ## for section headers\n"
-    "- Each bullet point MUST be on its own line:\n"
-    "  - Item one\n"
-    "  - Item two\n"
-    "- For hearing levels/test scores, use markdown tables with dates\n"
-    "- For ALL claims of improvement or change, include the specific quantitative data (numbers, dates, scores) from the reports that justify the claim.\n\n"
-    "**REQUIRED SECTIONS:**\n\n"
-    "## Patient Background & Presentation\n"
-    "Include: Age, presenting concerns, family/school context, relevant history.\n"
-    "- Explicitly include any school context or teacher comments about attention, participation, or progress.\n\n"
-    "## Initial Diagnosis & Assessment\n"
-    "- Type and severity of hearing loss (from earliest report)\n"
-    "- Audiogram findings (frequency-specific thresholds)\n"
-    "- Speech perception scores (SRT, WRS in quiet/noise)\n"
-    "- Acoustic reflexes and OAE results\n"
-    "- Impact on speech/language development\n\n"
-    "## Intervention Timeline\n"
-    "**CRITICAL: Document the intervention journey:**\n"
-    "- Hearing aid fitting/recommendation (when, what type)\n"
-    "- Initial compliance/acceptance issues (if any)\n"
-    "- Hearing aid usage: Explicitly state initial rejection (e.g., pulling out after 2-3 hours) and current wear time (e.g., 9.5 hours/day) with dates.\n"
-    "- Therapy initiation (goals, frequency)\n"
-    "- Family training and support\n\n"
-    "## Progress & Evolution\n"
-    "**CRITICAL: Show changes over time across ALL reports:**\n"
-    "- Hearing aid usage (hours per day, compliance improvements)\n"
-    "- Auditory skill development (e.g., Ling 6 detection)\n"
-    "- Receptive language gains (comprehension in quiet vs. noise)\n"
-    "- Expressive language progress (MLU, vocabulary, grammar): Always include MLU numbers and dates (e.g., MLU: 2.2 → 3.5).\n"
-    "- Speech clarity improvements\n"
-    "- Social/pragmatic communication gains\n"
-    "- School context: Include teacher-reported changes in attention, participation, or other relevant metrics.\n"
-    "Use specific data points with dates when available.\n\n"
-    "## Current Status & Functional Impact\n"
-    "- Latest hearing aid usage metrics\n"
-    "- Current speech/language levels (include quantitative scores if available)\n"
-    "- Real-world communication abilities\n"
-    "- School/social participation (include teacher comments if present)\n\n"
-    "## Recommendations & Next Steps\n"
-    "- Ongoing therapy goals\n"
-    "- Hearing aid management\n"
-    "- Re-evaluation timeline\n"
-    "- Family/school strategies\n\n"
-    "**REMEMBER:** This is a LONGITUDINAL summary. Tell the story of diagnosis → intervention → progress. Do NOT just describe the first report. Do NOT discuss tumors."
+    "You are an expert medical AI assistant specializing in comprehensive clinical documentation. Generate a structured medical summary using the exact hierarchy below.\n\n"
+    "## PATIENT OVERVIEW\n"
+    "- Name, Age, Sex, DOB\n"
+    "- **Primary Diagnosis** (in bold, first line)\n"
+    "- Report Date Range: [earliest] to [latest]\n\n"
+    "## DIAGNOSIS & CLASSIFICATION\n"
+    "- Primary diagnosis with severity grade\n"
+    "- Secondary diagnoses (ICD codes if available)\n"
+    "- Etiology/likely cause if stated\n\n"
+    "## CLINICAL TIMELINE (Chronological)\n"
+    "**CRITICAL:** Always sort timeline entries from OLDEST to NEWEST.\n"
+    "- Format: YYYY-MM-DD - Event description\n"
+    "- If exact date unknown but sequence is clear, use \"Early/Mid/Late [Month Year]\"\n"
+    "- Example:\n"
+    "  - 2024-11-15 - Initial evaluation: bilateral SNHL diagnosed\n"
+    "  - 2024-11-20 - Bilateral Phonak Sky hearing aids fitted\n"
+    "  - 2025-02-10 - Progress check: improved compliance and MLU gains\n\n"
+    "## KEY FINDINGS BY SYSTEM\n"
+    "Organized by body system or specialty:\n"
+    "- **Audiology**: [thresholds, configurations, reflexes]\n"
+    "- **Speech-Language**: [MLU, articulation, comprehension]\n"
+    "- **Device/Equipment**: [specific brand names, models when available - e.g., \"Phonak Sky\" not \"hearing aids\"]\n\n"
+    "## FUNCTIONAL STATUS & QUALITY OF LIFE\n"
+    "- **Baseline symptoms**: [patient/family reported limitations from earliest report]\n"
+    "- **Current status**: [how symptoms have changed - be specific]\n"
+    "- **School/work impact**: [specific examples of participation, attention, performance]\n"
+    "- **Caregiver burden**: [compliance challenges, support needed, family training]\n\n"
+    "## INTERVENTIONS & RESPONSE\n"
+    "**Treatment Timeline (Chronological):**\n"
+    "- **What was started**: [device/medication/therapy with brand/model/dosage]\n"
+    "- **When started**: [actual date - never write \"[date]\", use real date or \"date not specified\"]\n"
+    "- **Initial response**: [side effects, acceptance, immediate outcomes]\n"
+    "- **Adjustments**: [changes to treatment plan over time]\n"
+    "- **Compliance/adherence**: [quantitative data - quote exactly as written, do not fabricate]\n\n"
+    "**Treatment Response Tracking:**\n"
+    "For quantitative measures, always show: Baseline → Latest (% change or delta)\n"
+    "- Use symbols: ↑ for improvement, ↓ for decline, → for stable\n"
+    "- Example: \"MLU: 2.2 words (2024-11-15) → 3.5 words (2025-02-10) [+1.3 words, +59% ↑]\"\n"
+    "- Example: \"Hearing aid usage: 2-3 hours/day (2024-11-20) → 9.5 hours/day (2025-02-10) [+7 hours ↑]\"\n\n"
+    "## OBJECTIVE MEASUREMENTS (Table format)\n"
+    "| Date | Test | Value | Reference Range | Interpretation |\n"
+    "| :--- | :--- | :--- | :--- | :--- |\n"
+    "| YYYY-MM-DD | [Test Name] | [Value] | [Range] | [Clinical meaning] |\n\n"
+    "**CRITICAL:** Flag only TRUE abnormals - use clinical judgment, not just lab ranges. Do NOT mark values as abnormal if they are expected/consistent with the diagnosis.\n\n"
+    "## OUTSTANDING ISSUES & RED FLAGS\n"
+    "- Any safety concerns (progressive loss, infections, non-compliance)\n"
+    "- Pending workups (genetic testing, imaging, consultations)\n"
+    "- Medical clearances needed\n"
+    "- **Missing critical data**: If a test/value should have been documented but wasn't mentioned, flag it:\n"
+    "  Example: \"⚠️ Genetic testing for hereditary SNHL not mentioned\"\n"
+    "  Example: \"⚠️ OAE results not documented\"\n\n"
+    "## CURRENT MANAGEMENT PLAN\n"
+    "1. Active treatments with frequency (include brand names, models, specific therapy types)\n"
+    "2. Upcoming goals (specific, measurable)\n"
+    "3. Next follow-up date and purpose\n\n"
+    "## PROGNOSIS\n"
+    "- Short-term outlook\n"
+    "- Long-term functional expectations\n\n"
+    "---\n\n"
+    "**CRITICAL RULES:**\n"
+    "1. NEVER mark values as \"abnormal\" if they're expected/consistent with diagnosis\n"
+    "2. Age for pediatric patients MUST appear in first 2 lines\n"
+    "3. Use past tense for completed findings, present tense for current status\n"
+    "4. Quantify whenever possible (use numbers, percentages, dates)\n"
+    "5. Distinguish between \"not done\" vs \"within normal limits\"\n"
+    "6. For serial reports: highlight CHANGES between timepoints with deltas and percentages\n"
+    "7. If multiple specialists: clearly label which findings came from whom\n"
+    "8. Extract data EXACTLY as stated - do not invent or infer values not present\n"
+    "9. For compliance data: quote exactly as written (e.g., \"2-3 hours\"), do not average or fabricate\n"
+    "10. Distinguish metric types carefully (e.g., SRT vs Presentation Level, Detection vs Production)\n"
+    "11. NEVER write placeholder text like \"[date]\" or \"[value]\" - extract actual data or write \"Not documented\"\n"
+    "12. Always sort chronological sections from OLDEST to NEWEST\n"
+    "13. Include device/medication brand names and models when available\n"
+    "14. Show treatment response with Baseline → Latest format and calculate change percentages\n\n"
+    "**CRITICAL DATA EXTRACTION RULES:**\n"
+    "15. **NEVER omit test results mentioned in source documents**\n"
+    "    - If document mentions \"OAE absent\", it MUST appear in summary\n"
+    "    - If document mentions \"bone conduction\", it MUST appear in summary\n"
+    "    - If document mentions \"acoustic reflexes\", it MUST appear in summary\n"
+    "    - ALL mentioned test results are clinically relevant - do not filter them out\n\n"
+    "16. **Quantitative Comparisons - ALWAYS calculate and show:**\n"
+    "    - Baseline value with date\n"
+    "    - Follow-up value with date\n"
+    "    - Absolute change (e.g., +1.3 words, +7 hours/day)\n"
+    "    - Percent change (e.g., +59%, +233%)\n"
+    "    - Direction symbol: ↑ improvement, ↓ decline, → stable\n"
+    "    - Example format: \"MLU: 2.2 words (2024-11-15) → 3.5 words (2025-02-10) [+1.3 words, +59% ↑]\"\n\n"
+    "17. **Date Inference:**\n"
+    "    - If document says \"two weeks ago\" on Date X, calculate Date X minus 14 days\n"
+    "    - Format approximations as \"~YYYY-MM-DD\" to indicate calculated date\n"
+    "    - If month/year only: use first day of month (e.g., \"November 2024\" → \"2024-11-01\")\n\n"
+    "18. **Compliance Data - ALWAYS extract:**\n"
+    "    - Quantitative wear time/adherence data (hours per day, frequency)\n"
+    "    - Show trajectory: Initial → Current with dates\n"
+    "    - Include any barriers to compliance mentioned\n"
+    "    - Example: \"Hearing aid usage: 2-3 hours/day (2024-11-20) → 9.5 hours/day (2025-02-10) [+7 hours ↑]\"\n\n"
+    "19. **Functional Outcomes - Extract ALL mentions of:**\n"
+    "    - Real-world impact (school performance, home communication, social participation)\n"
+    "    - Teacher reports/observations\n"
+    "    - Parent/caregiver feedback\n"
+    "    - These are as clinically important as test scores\n\n"
+    "20. **OUTSTANDING ISSUES & RED FLAGS section is MANDATORY:**\n"
+    "    - Never omit this section\n"
+    "    - If no issues found in documents, write: \"No acute safety concerns identified at this time\"\n"
+    "    - If documents are silent on expected tests, flag as: \"⚠️ [Test name] not documented\"\n"
+    "    - Always include any progressive conditions, non-compliance, or pending workups"
 )
 
 class SummarizeRequest(BaseModel):
@@ -324,38 +379,60 @@ def _generate_summary(context_chunks: List[str], patient_label: str, system_prom
         joined = joined[-MAX_SAFE_CHARS:]
     approx_tokens = len(joined) // 4
     logger.debug(f"Summarization context chars={len(joined)} approx_tokens={approx_tokens}")
-    prompt = (
-        f"{system_prompt}\n\n"
-        f"Strict Formatting Rules:\n"
-        f"- Key Findings: Use bullet points.\n"
-        f"- Lab Values: If there are lab results, output them in a Markdown table with columns: Date | Test | Value | Flag (High/Low/Normal). Include only abnormal or clinically relevant normals for rule-outs.\n"
-        f"- Evolution: Explicitly describe how values or sizes changed from the oldest to the newest report.\n"
-        f"- Do not write long paragraphs. Keep sentences concise. No decorative formatting.\n\n"
-        f"Additional Guidance:\n"
-        f"- Identify the main clinical story in one line (e.g., 'Persistent neutrophilic leukocytosis with improving trend').\n"
-        f"- Prefer specific numbers with units and dates, exactly as given.\n"
-        f"- Do not invent or infer values or dates that are not present in the context.\n"
-        f"- If no labs are present, omit the Lab Values table section.\n\n"
-        f"Output exactly in the following order and headings (no extra sections):\n\n"
-        f"Main Story:\n"
-        f"- <one-line main story>\n\n"
-        f"Key Findings:\n"
-        f"- <bullet>\n- <bullet>\n\n"
-        f"Lab Values:\n"
-        f"| Date | Test | Value | Flag |\n"
-        f"|---|---|---|---|\n"
-        f"[add rows only if labs exist]\n\n"
-        f"Evolution:\n"
-        f"- <bulleted trend statements from oldest → newest>\n\n"
-        f"Context:\n{joined}\n\n"
-        f"Summary:"
-    )
+    
+    # Check if using the new structured SPEECH_PROMPT format
+    if system_prompt == SPEECH_PROMPT:
+        # New format: prompt is self-contained with its own structure
+        prompt = f"{system_prompt}\n\n**PATIENT DATA (Medical Reports):**\n{joined}\n\n**Generate the summary now:**"
+    else:
+        # Legacy STANDARD_PROMPT format with additional formatting rules
+        prompt = (
+            f"{system_prompt}\n\n"
+            f"Strict Formatting Rules:\n"
+            f"- Key Findings: Use bullet points.\n"
+            f"- Lab Values: If there are lab results, output them in a Markdown table with columns: Date | Test | Value | Flag (High/Low/Normal). Include only abnormal or clinically relevant normals for rule-outs.\n"
+            f"- Evolution: Explicitly describe how values or sizes changed from the oldest to the newest report.\n"
+            f"- Do not write long paragraphs. Keep sentences concise. No decorative formatting.\n\n"
+            f"Additional Guidance:\n"
+            f"- Identify the main clinical story in one line (e.g., 'Persistent neutrophilic leukocytosis with improving trend').\n"
+            f"- Prefer specific numbers with units and dates, exactly as given.\n"
+            f"- Do not invent or infer values or dates that are not present in the context.\n"
+            f"- If no labs are present, omit the Lab Values table section.\n\n"
+            f"Output exactly in the following order and headings (no extra sections):\n\n"
+            f"Main Story:\n"
+            f"- <one-line main story>\n\n"
+            f"Key Findings:\n"
+            f"- <bullet>\n- <bullet>\n\n"
+            f"Lab Values:\n"
+            f"| Date | Test | Value | Flag |\n"
+            f"|---|---|---|---|\n"
+            f"[add rows only if labs exist]\n\n"
+            f"Evolution:\n"
+            f"- <bulleted trend statements from oldest → newest>\n\n"
+            f"Context:\n{joined}\n\n"
+            f"Summary:"
+        )
 
-    def _try(model_name: str, ctx: str) -> Tuple[bool, str]:
+    def _try(model_name: str, ctx: str, use_cpu: bool = False) -> Tuple[bool, str]:
         try:
+            options_dict = {
+                "temperature": 0.1,
+                "num_ctx": 4096 if use_cpu else 8192,
+                "top_p": 0.9,
+                "repeat_penalty": 1.1
+            }
+            if use_cpu:
+                options_dict["num_gpu"] = 0
+            
             r = requests.post(
                 "http://localhost:11434/api/generate",
-                json={"model": model_name, "prompt": ctx, "stream": False}, timeout=180
+                json={
+                    "model": model_name,
+                    "prompt": ctx,
+                    "stream": False,
+                    "options": options_dict
+                },
+                timeout=600 if use_cpu else 300
             )
         except Exception as e:
             return False, f"network:{e}"
@@ -376,13 +453,26 @@ def _generate_summary(context_chunks: List[str], patient_label: str, system_prom
     lower_err = primary.lower()
     if any(k in lower_err for k in ["cuda", "oom", "terminated", "memory"]):
         logger.warning(f"GPU-related generation failure detected: {primary}")
-        fallbacks = [f"{GEN_MODEL}-q4", "llama3:8b-q4", "llama3:8b-instruct"]
+        
+        # Try CPU-only mode with original model first
+        logger.info("Attempting CPU-only inference...")
+        ok_cpu, res_cpu = _try(GEN_MODEL, prompt, use_cpu=True)
+        if ok_cpu:
+            return res_cpu + "\n(Note: Generated using CPU due to GPU constraints.)"
+        
+        # Try smaller models
+        fallbacks = ["qwen2.5:7b-instruct-q4_K_M", "qwen2.5:3b-instruct-q4_K_M", "llama3.2:3b-instruct-q4_K_M"]
         for fm in fallbacks:
             ok2, res2 = _try(fm, prompt)
             if ok2:
-                return res2 + "\n(Note: Quantized fallback model used due to GPU memory constraints.)"
+                return res2 + "\n(Note: Smaller model used due to GPU memory constraints.)"
+        
+        # Last resort: reduced context
         reduced = joined[-(MAX_SAFE_CHARS // 2):]
-        reduced_prompt = prompt.replace(f"Context:\n{joined}", f"Context (Reduced Extract):\n{reduced}")
+        if "Context:\n{joined}" in prompt:
+            reduced_prompt = prompt.replace(f"Context:\n{joined}", f"Context (Reduced Extract):\n{reduced}")
+        else:
+            reduced_prompt = prompt.replace(joined, reduced)
         ok3, res3 = _try(GEN_MODEL, reduced_prompt)
         if ok3:
             return res3 + "\n(Note: Context reduced due to GPU memory constraints.)"
@@ -420,11 +510,26 @@ def _answer_question(context_chunks: List[str], question: str) -> str:
         f"Answer:"
     )
 
-    def _try(model_name: str, ctx: str) -> Tuple[bool, str]:
+    def _try(model_name: str, ctx: str, use_cpu: bool = False) -> Tuple[bool, str]:
         try:
+            options_dict = {
+                "temperature": 0.1,
+                "num_ctx": 4096 if use_cpu else 8192,
+                "top_p": 0.9,
+                "repeat_penalty": 1.1
+            }
+            if use_cpu:
+                options_dict["num_gpu"] = 0
+            
             r = requests.post(
                 "http://localhost:11434/api/generate",
-                json={"model": model_name, "prompt": ctx, "stream": False}, timeout=180
+                json={
+                    "model": model_name,
+                    "prompt": ctx,
+                    "stream": False,
+                    "options": options_dict
+                },
+                timeout=600 if use_cpu else 300
             )
         except Exception as e:
             return False, f"network:{e}"
@@ -446,11 +551,18 @@ def _answer_question(context_chunks: List[str], question: str) -> str:
     lower_err = primary.lower()
     if any(k in lower_err for k in ["cuda", "oom", "terminated", "memory"]):
         logger.warning(f"GPU-related generation failure detected: {primary}")
-        fallbacks = [f"{GEN_MODEL}-q4", "llama3:8b-q4", "llama3:8b-instruct"]
+        
+        # Try CPU-only mode first
+        logger.info("Attempting CPU-only inference for question answering...")
+        ok_cpu, res_cpu = _try(GEN_MODEL, prompt, use_cpu=True)
+        if ok_cpu:
+            return res_cpu + "\n(Note: Generated using CPU due to GPU constraints.)"
+        
+        fallbacks = ["qwen2.5:7b-instruct-q4_K_M", "qwen2.5:3b-instruct-q4_K_M", "llama3.2:3b-instruct-q4_K_M"]
         for fm in fallbacks:
             ok2, res2 = _try(fm, prompt)
             if ok2:
-                return res2 + "\n(Note: Quantized fallback model used due to GPU memory constraints.)"
+                return res2 + "\n(Note: Smaller model used due to GPU memory constraints.)"
         # Reduce context aggressively
         reduced = joined[-(MAX_SAFE_CHARS // 2):]
         reduced_prompt = prompt.replace(f"Context (Medical Reports):\n{joined}", f"Context (Reduced Extract):\n{reduced}")
