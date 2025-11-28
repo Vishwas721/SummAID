@@ -8,7 +8,6 @@ export function PatientSidebar({ selectedPatientId, onSelectPatient }) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [searchTerm, setSearchTerm] = useState('')
-  const [isCollapsed, setIsCollapsed] = useState(false)
 
   useEffect(() => {
     const fetchPatients = async () => {
@@ -39,27 +38,7 @@ export function PatientSidebar({ selectedPatientId, onSelectPatient }) {
   })
 
   return (
-    <>
-      {/* Collapse/Expand Toggle Button */}
-      <button
-        onClick={() => setIsCollapsed(!isCollapsed)}
-        className={cn(
-          "fixed top-1/2 -translate-y-1/2 z-50 transition-all duration-300",
-          "w-8 h-16 bg-gradient-to-r from-blue-500 to-purple-600",
-          "text-white rounded-r-lg shadow-lg",
-          "flex items-center justify-center",
-          "hover:from-blue-600 hover:to-purple-700 hover:w-10",
-          "transition-all duration-200",
-          isCollapsed ? "left-0" : "left-80"
-        )}
-      >
-        {isCollapsed ? <ChevronRight className="h-5 w-5" /> : <ChevronLeft className="h-5 w-5" />}
-      </button>
-
-      <div className={cn(
-        "h-screen bg-gradient-to-b from-slate-50 to-white dark:from-slate-900 dark:to-slate-800 border-r border-slate-200 dark:border-slate-700 flex flex-col shadow-xl transition-all duration-300 overflow-hidden",
-        isCollapsed ? "w-0 min-w-0" : "w-80 min-w-80"
-      )}>
+      <div className="h-full bg-gradient-to-b from-slate-50 to-white dark:from-slate-900 dark:to-slate-800 border-l border-slate-200 dark:border-slate-700 flex flex-col shadow-xl overflow-hidden">
 
       {/* Header */}
       <div className="p-6 border-b border-slate-200 dark:border-slate-700 bg-white/50 dark:bg-slate-900/50 backdrop-blur-sm">
@@ -199,6 +178,5 @@ export function PatientSidebar({ selectedPatientId, onSelectPatient }) {
         </div>
       </div>
     </div>
-    </>
   )
 }

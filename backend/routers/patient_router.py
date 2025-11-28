@@ -66,7 +66,12 @@ def get_report_file(report_id: int):
         filepath = row[0]
         if not os.path.isfile(filepath):
             raise HTTPException(status_code=404, detail=f"File not found: {filepath}")
-        return FileResponse(filepath, media_type="application/pdf", filename=os.path.basename(filepath))
+        return FileResponse(
+            filepath, 
+            media_type="application/pdf", 
+            filename=os.path.basename(filepath),
+            content_disposition_type="inline"
+        )
     except HTTPException:
         raise
     except Exception as e:
