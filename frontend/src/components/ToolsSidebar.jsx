@@ -1,8 +1,9 @@
-import { useState } from 'react'
-import { MessageSquare, Send, FileText, Pill, Loader2, AlertTriangle, CheckCircle2, Printer, Download } from 'lucide-react'
+import { useState, useEffect, useRef } from 'react'
+import { MessageSquare, Send, FileText, Pill, Loader2, AlertTriangle, CheckCircle2, Printer, Download, Mic } from 'lucide-react'
 import { cn } from '../lib/utils'
 import axios from 'axios'
 import jsPDF from 'jspdf'
+import { useSpeechRecognition } from '../hooks/useSpeechRecognition'
 
 export function ToolsSidebar({ patientId }) {
   const [userRole] = useState(localStorage.getItem('user_role') || 'DOCTOR')
@@ -14,6 +15,13 @@ export function ToolsSidebar({ patientId }) {
   const [chatLoading, setChatLoading] = useState(false)
   const [chatError, setChatError] = useState(null)
   
+  // Speech recognition
+  const { isListening, transcript, startListening, stopListening, resetTranscript, isSupported, error: speechError } = useSpeechRecognition()
+  
+  // Scroll reference for auto-scroll to bottom
+  const messagesEndRef = useRef(null)
+  const lastProcessedTranscriptRef = useRef('')
+  
   // Rx state (DOCTOR only)
   const [drugName, setDrugName] = useState('')
   const [dosage, setDosage] = useState('')
@@ -23,6 +31,40 @@ export function ToolsSidebar({ patientId }) {
   const [safetyWarning, setSafetyWarning] = useState(null)
   const [safetyCheckDone, setSafetyCheckDone] = useState(false)
   
+  // Update chat input when speech recognition provides transcript
+  useEffect(() => {
+    if (transcript && transcript !== lastProcessedTranscriptRef.current) {
+      const newText = transcript.substring(lastProcessedTranscriptRef.current.length)
+      if (newText) {
+        setChatInput(prev => prev + newText)
+        lastProcessedTranscriptRef.current = transcript
+      }
+    }
+  }, [transcript])
+  
+  // Reset transcript tracking when recognition stops
+  useEffect(() => {
+    if (!isListening) {
+      lastProcessedTranscriptRef.current = ''
+      resetTranscript()
+    }
+  }, [isListening, resetTranscript])
+  
+  // Auto-scroll to bottom when messages change
+  useEffect(() => {
+    // Multiple scroll attempts to ensure it works
+    if (messagesEndRef.current) {
+      // Immediate scroll
+      messagesEndRef.current.scrollIntoView({ behavior: 'auto', block: 'end' })
+      
+      // Delayed scroll for dynamic content
+      const timer = setTimeout(() => {
+        messagesEndRef.current?.scrollIntoView({ behavior: 'auto', block: 'end' })
+      }, 50)
+      return () => clearTimeout(timer)
+    }
+  }, [messages, chatLoading])
+  
   // MA role should not see this sidebar at all
   if (userRole !== 'DOCTOR') {
     return null
@@ -30,6 +72,12 @@ export function ToolsSidebar({ patientId }) {
 
   const handleSendMessage = async () => {
     if (!patientId || !chatInput.trim() || chatLoading) return
+    
+    // Stop any ongoing speech recognition and clear transcript
+    if (isListening) {
+      stopListening()
+    }
+    resetTranscript()
     
     const userMessage = chatInput.trim()
     setChatInput('')
@@ -286,10 +334,17 @@ export function ToolsSidebar({ patientId }) {
                   <span>{chatError}</span>
                 </div>
               )}
+              {/* Scroll anchor */}
+              <div ref={messagesEndRef} />
             </div>
             
             {/* Input */}
             <div className="p-4 border-t border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800">
+              {speechError && (
+                <div className="mb-2 p-2 bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-300 text-xs rounded">
+                  {speechError}
+                </div>
+              )}
               <div className="flex gap-2">
                 <input
                   type="text"
@@ -301,6 +356,25 @@ export function ToolsSidebar({ patientId }) {
                   className="flex-1 px-3 py-2 text-sm rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-700 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-400 disabled:opacity-50"
                 />
                 <button
+                  onMouseDown={startListening}
+                  onMouseUp={stopListening}
+                  onMouseLeave={stopListening}
+                  onTouchStart={startListening}
+                  onTouchEnd={stopListening}
+                  onContextMenu={(e) => e.preventDefault()}
+                  disabled={!patientId || chatLoading || !isSupported}
+                  className={cn(
+                    "px-3 py-2 rounded-lg transition-all",
+                    isListening
+                      ? "bg-red-500 text-white animate-pulse"
+                      : "bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-300 dark:hover:bg-slate-600",
+                    (!patientId || chatLoading || !isSupported) && "opacity-50 cursor-not-allowed"
+                  )}
+                  title={isSupported ? "Hold to record voice" : "Voice input not supported"}
+                >
+                  <Mic className="h-4 w-4" />
+                </button>
+                <button
                   onClick={handleSendMessage}
                   disabled={!patientId || !chatInput.trim() || chatLoading}
                   className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
@@ -308,6 +382,12 @@ export function ToolsSidebar({ patientId }) {
                   <Send className="h-4 w-4" />
                 </button>
               </div>
+              {isListening && (
+                <div className="mt-2 text-xs text-red-600 dark:text-red-400 flex items-center gap-1">
+                  <span className="inline-block w-2 h-2 bg-red-500 rounded-full animate-pulse"></span>
+                  Recording... Release to stop
+                </div>
+              )}
             </div>
           </div>
         )}
