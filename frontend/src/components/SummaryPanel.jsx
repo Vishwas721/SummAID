@@ -1,9 +1,10 @@
 import { useState, useEffect, Children } from 'react'
 import axios from 'axios'
-import { Sparkles, Loader2, AlertTriangle, CheckCircle2, ChevronLeft, ChevronRight, ExternalLink, X } from 'lucide-react'
+import { Sparkles, Loader2, AlertTriangle, CheckCircle2, ChevronLeft, ChevronRight, ExternalLink, X, Download } from 'lucide-react'
 import { cn } from '../lib/utils'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import jsPDF from 'jspdf'
 import { Document, Page, pdfjs } from 'react-pdf'
 import 'react-pdf/dist/Page/AnnotationLayer.css'
 import 'react-pdf/dist/Page/TextLayer.css'
@@ -118,6 +119,45 @@ export function SummaryPanel({ patientId }) {
     } finally {
       setGenerating(false)
     }
+  }
+
+  const handleExportPDF = () => {
+    if (!summary) return
+
+    const doc = new jsPDF()
+    const margin = 20
+    const pageWidth = doc.internal.pageSize.getWidth()
+    const maxWidth = pageWidth - margin * 2
+    let y = margin
+
+    // Header
+    doc.setFontSize(18)
+    doc.setFont(undefined, 'bold')
+    doc.text('Clinical Summary', margin, y)
+    y += 10
+
+    // Patient info
+    doc.setFontSize(10)
+    doc.setFont(undefined, 'normal')
+    doc.text(`Patient ID: ${patientId}`, margin, y)
+    y += 6
+    doc.text(`Generated: ${new Date().toLocaleString()}`, margin, y)
+    y += 12
+
+    // Summary content
+    doc.setFontSize(11)
+    const lines = doc.splitTextToSize(summary.replace(/[#*]/g, ''), maxWidth)
+    lines.forEach(line => {
+      if (y > doc.internal.pageSize.getHeight() - margin) {
+        doc.addPage()
+        y = margin
+      }
+      doc.text(line, margin, y)
+      y += 6
+    })
+
+    // Save
+    doc.save(`summary_patient_${patientId}_${Date.now()}.pdf`)
   }
 
   const handleGenerate = async () => {
@@ -307,6 +347,13 @@ export function SummaryPanel({ patientId }) {
             <div className="flex items-start justify-between mb-3">
               <div />
               <div className="flex items-center gap-2">
+                <button
+                  onClick={handleExportPDF}
+                  className="text-xs px-2 py-1 rounded bg-green-500 text-white hover:bg-green-600 flex items-center gap-1"
+                >
+                  <Download className="h-3 w-3" />
+                  Export PDF
+                </button>
                 <button
                   onClick={() => { setEditMode(true); setEditedText(summary) }}
                   className="text-xs px-2 py-1 rounded bg-blue-500 text-white hover:bg-blue-600"
