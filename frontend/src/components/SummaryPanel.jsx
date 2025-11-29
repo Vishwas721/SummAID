@@ -24,6 +24,9 @@ export function SummaryPanel({ patientId }) {
   const [userRole] = useState(localStorage.getItem('user_role') || 'DOCTOR')
   const [selectedCitation, setSelectedCitation] = useState(null)
   const [pdfPanel, setPdfPanel] = useState({ open: false, src: null, page: 1, title: '', search: '' })
+  // Edit state for doctor to modify and save official summary
+  const [editMode, setEditMode] = useState(false)
+  const [editedText, setEditedText] = useState('')
   
   // PDF Viewer State
   const [numPages, setNumPages] = useState(null)
@@ -78,6 +81,7 @@ export function SummaryPanel({ patientId }) {
       const response = await axios.get(url)
       const data = response.data || {}
       setSummary(data.summary_text || '')
+      setEditedText(data.summary_text || '')
       setCitations(Array.isArray(data.citations) ? data.citations : [])
       setChartPrepared(!!data.summary_text)
     } catch (e) {
@@ -89,6 +93,28 @@ export function SummaryPanel({ patientId }) {
         console.error('Fetch summary error', e)
         setError(e.response?.data?.detail || e.message || 'Failed to load summary')
       }
+    } finally {
+      setGenerating(false)
+    }
+  }
+
+  const handleSaveEditedSummary = async () => {
+    if (!patientId) return
+    try {
+      setGenerating(true)
+      const url = `${import.meta.env.VITE_API_URL}/save_summary`
+      const response = await axios.post(url, {
+        patient_id: Number(patientId),
+        summary_text: editedText
+      })
+      const data = response.data || {}
+      setSummary(data.summary_text || editedText)
+      setEditedText(data.summary_text || editedText)
+      setEditMode(false)
+      setChartPrepared(true)
+    } catch (e) {
+      console.error('Save edited summary error', e)
+      setError(e.response?.data?.detail || e.message || 'Failed to save summary')
     } finally {
       setGenerating(false)
     }
@@ -111,6 +137,7 @@ export function SummaryPanel({ patientId }) {
       })
       const data = response.data
       setSummary(data.summary_text || '(No summary returned)')
+      setEditedText(data.summary_text || '(No summary returned)')
       setCitations(Array.isArray(data.citations) ? data.citations : [])
       setChartPrepared(true)
     } catch (e) {
@@ -275,8 +302,19 @@ export function SummaryPanel({ patientId }) {
           </div>
         )}
 
-        {!generating && summary && (
+        {!generating && summary && !editMode && (
           <div className="prose prose-sm dark:prose-invert max-w-none">
+            <div className="flex items-start justify-between mb-3">
+              <div />
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => { setEditMode(true); setEditedText(summary) }}
+                  className="text-xs px-2 py-1 rounded bg-blue-500 text-white hover:bg-blue-600"
+                >
+                  Edit
+                </button>
+              </div>
+            </div>
             <ReactMarkdown
               remarkPlugins={[remarkGfm]}
               components={{
@@ -335,6 +373,33 @@ export function SummaryPanel({ patientId }) {
             >
               {summary}
             </ReactMarkdown>
+          </div>
+        )}
+
+        {/* Edit mode: textarea + save/cancel */}
+        {!generating && editMode && (
+          <div className="max-w-none">
+            <div className="mb-3 flex items-center justify-end gap-2">
+              <button
+                onClick={() => { setEditMode(false); setEditedText(summary) }}
+                className="text-xs px-2 py-1 rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSaveEditedSummary}
+                disabled={generating}
+                className="text-xs px-2 py-1 rounded bg-amber-500 text-white hover:bg-amber-600"
+              >
+                {generating ? 'Saving...' : 'Save Changes'}
+              </button>
+            </div>
+            <textarea
+              value={editedText}
+              onChange={(e) => setEditedText(e.target.value)}
+              rows={18}
+              className="w-full text-sm px-4 py-3 rounded-lg border-2 border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-amber-400"
+            />
           </div>
         )}
 

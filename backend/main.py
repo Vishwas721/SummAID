@@ -3,6 +3,7 @@ import json
 import logging
 import unicodedata
 from typing import List, Optional, Tuple
+from datetime import datetime
 from fastapi import FastAPI, HTTPException, Body, Path, Request
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
@@ -84,6 +85,11 @@ def ensure_summary_support():
               generated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
             )
         """)
+        # Add last_edited_at column when missing (do this even if table existed before)
+        try:
+            cur.execute("ALTER TABLE patient_summaries ADD COLUMN IF NOT EXISTS last_edited_at TIMESTAMP NULL")
+        except Exception as e:
+            logger.warning(f"last_edited_at alter warning (non-fatal): {e}")
         # Index for retrieval ordering if needed
         cur.execute("CREATE INDEX IF NOT EXISTS idx_patient_summaries_generated_at ON patient_summaries(generated_at DESC)")
         conn.commit(); cur.close(); conn.close()
@@ -357,6 +363,11 @@ class SafetyCheckResponse(BaseModel):
     warnings: List[str] = Field(default_factory=list, description="List of specific warnings")
     allergy_details: Optional[str] = Field(default=None, description="Detailed allergy information")
     citations: List[dict] = Field(default_factory=list, description="Report chunks containing allergy information")
+
+
+class SaveSummaryRequest(BaseModel):
+    patient_id: int = Field(..., description="Patient ID to save summary for")
+    summary_text: str = Field(..., description="Edited summary text to persist as official version")
 
 def _embed_text(text: str) -> List[float]:
     """Call local Ollama embed endpoint and return embedding (list of floats)."""
@@ -1089,6 +1100,44 @@ def fetch_patient_summary(patient_id: int = Path(..., description="Patient ID to
         if conn:
             conn.close()
 
+
+@app.post("/save_summary")
+def save_summary(payload: SaveSummaryRequest):
+    """Save an edited summary as the official version and update last_edited_at."""
+    conn = None
+    try:
+        ensure_summary_support()
+        conn = get_db_connection(); cur = conn.cursor()
+        # Upsert summary text and set last_edited_at
+        cur.execute(
+            """
+            INSERT INTO patient_summaries (patient_id, summary_text, patient_type, chief_complaint, citations, generated_at, last_edited_at)
+            VALUES (%s, %s, %s, %s, %s::jsonb, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            ON CONFLICT (patient_id) DO UPDATE
+              SET summary_text = EXCLUDED.summary_text,
+                  last_edited_at = CURRENT_TIMESTAMP
+            """,
+            (payload.patient_id, payload.summary_text, 'manual', None, '[]')
+        )
+        # Also mark patient as chart_prepared if not already
+        try:
+            cur.execute("UPDATE patients SET chart_prepared_at = CURRENT_TIMESTAMP WHERE patient_id=%s", (payload.patient_id,))
+        except Exception:
+            # non-critical
+            pass
+        conn.commit(); cur.close(); conn.close()
+        return {"summary_text": payload.summary_text, "last_edited_at": datetime.utcnow().isoformat()}
+    except HTTPException:
+        raise
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        logger.exception(f"Save summary error for patient {payload.patient_id}")
+        raise HTTPException(status_code=500, detail=f"Save summary error: {e}")
+    finally:
+        if conn:
+            conn.close()
+
 @app.get("/patients/doctor")
 async def get_doctor_patients():
     """Return only patients whose chart has been prepared (summary exists)."""
@@ -1134,12 +1183,15 @@ async def safety_check(
     
     Returns warnings if potential allergies are detected.
     """
+    logger.info(f"🚀 Safety check started for patient_id={patient_id}, drug={payload.drug_name}")
     try:
         # 1. Resolve patient and get report_ids
         conn = get_db_connection()
         cur = conn.cursor()
+        logger.info(f"   Fetching patient data for patient_id={patient_id}")
         cur.execute("SELECT patient_display_name, patient_demo_id FROM patients WHERE patient_id=%s", (patient_id,))
         prow = cur.fetchone()
+        logger.info(f"   Patient query result: {prow}")
         if not prow:
             cur.close()
             conn.close()
@@ -1147,13 +1199,24 @@ async def safety_check(
         display_name, patient_demo_id = prow[0], prow[1]
         label = display_name or patient_demo_id or str(patient_id)
 
+        logger.info(f"   Fetching reports for patient_id={patient_id}")
         cur.execute("SELECT report_id FROM reports WHERE patient_id=%s ORDER BY report_id", (patient_id,))
         report_rows = cur.fetchall()
         report_ids = [r[0] for r in report_rows]
-        if not report_ids:
+        logger.info(f"   Found {len(report_ids)} reports: {report_ids}")
+        
+        # Fetch latest summary text
+        logger.info(f"   Fetching summary for patient_id={patient_id}")
+        cur.execute("SELECT summary_text FROM patient_summaries WHERE patient_id=%s ORDER BY generated_at DESC LIMIT 1", (patient_id,))
+        summary_row = cur.fetchone()
+        summary_text = summary_row[0] if summary_row else ""
+        logger.info(f"   Summary found: {bool(summary_text)} (length: {len(summary_text) if summary_text else 0})")
+
+        if not report_ids and not summary_text:
+            logger.info(f"   ✅ No reports or summary - returning safe")
             cur.close()
             conn.close()
-            # No reports = no documented allergies
+            # No reports or summary = no documented allergies
             return SafetyCheckResponse(
                 has_allergy=False,
                 warnings=[],
@@ -1163,7 +1226,9 @@ async def safety_check(
 
         # 2. Build search query focused on allergies + drug name
         drug_name = payload.drug_name.strip()
+        logger.info(f"   Drug name: {drug_name}")
         search_query = f"allergy allergies allergic reaction {drug_name}"
+        logger.info(f"   Search query: {search_query}")
         
         query_embedding = _embed_text(search_query)
         if len(query_embedding) != 768:
@@ -1171,50 +1236,53 @@ async def safety_check(
         embedding_literal = '[' + ','.join(f'{x:.6f}' for x in query_embedding) + ']'
 
         # 3. Hybrid retrieval: keyword + similarity search for allergy-related content
-        placeholders = ','.join(['%s'] * len(report_ids))
+        placeholders = ','.join(['%s'] * len(report_ids)) if report_ids else 'NULL'
         
         # 3a. Keyword search for allergy mentions
         allergy_keywords = ['allergy', 'allergies', 'allergic', 'hypersensitivity', 'adverse reaction']
         patterns = [f"%{kw}%" for kw in allergy_keywords]
-        ors = " OR ".join([f"pgp_sym_decrypt(c.chunk_text_encrypted, %s)::text ILIKE %s" for _ in patterns])
-        params: List[str] = []
-        for ptn in patterns:
-            params.extend([ENCRYPTION_KEY, ptn])
         
-        keyword_sql = f"""
-            SELECT DISTINCT c.chunk_id,
-                   c.report_id,
-                   pgp_sym_decrypt(c.chunk_text_encrypted, %s)::text AS chunk_text,
-                   c.source_metadata
-            FROM report_chunks c
-            WHERE c.report_id IN ({placeholders})
-            AND ({ors})
-            LIMIT 10
-        """
-        cur.execute(keyword_sql, [ENCRYPTION_KEY, *report_ids, *params])
         keyword_chunks = []
-        for row in cur.fetchall():
-            if row and row[2]:
-                keyword_chunks.append((row[0], row[1], row[2], row[3]))
+        if report_ids:
+            ors = " OR ".join([f"pgp_sym_decrypt(c.chunk_text_encrypted, %s)::text ILIKE %s" for _ in patterns])
+            params: List[str] = []
+            for ptn in patterns:
+                params.extend([ENCRYPTION_KEY, ptn])
+            
+            keyword_sql = f"""
+                SELECT DISTINCT c.chunk_id,
+                       c.report_id,
+                       pgp_sym_decrypt(c.chunk_text_encrypted, %s)::text AS chunk_text,
+                       c.source_metadata
+                FROM report_chunks c
+                WHERE c.report_id IN ({placeholders})
+                AND ({ors})
+                LIMIT 10
+            """
+            cur.execute(keyword_sql, [ENCRYPTION_KEY, *report_ids, *params])
+            for row in cur.fetchall():
+                if row and row[2]:
+                    keyword_chunks.append((row[0], row[1], row[2], row[3]))
         
         # 3b. Similarity search with allergy-focused query
-        similarity_sql = f"""
-            WITH q AS (SELECT %s::vector(768) AS qv)
-            SELECT c.chunk_id,
-                   c.report_id,
-                   pgp_sym_decrypt(c.chunk_text_encrypted, %s)::text AS chunk_text,
-                   c.source_metadata,
-                   (c.report_vector <=> q.qv) AS distance
-            FROM report_chunks c, q
-            WHERE c.report_id IN ({placeholders})
-            ORDER BY c.report_vector <=> q.qv
-            LIMIT 5
-        """
-        cur.execute(similarity_sql, (embedding_literal, ENCRYPTION_KEY, *report_ids))
         similarity_chunks = []
-        for row in cur.fetchall():
-            if row and row[2]:
-                similarity_chunks.append((row[0], row[1], row[2], row[3]))
+        if report_ids:
+            similarity_sql = f"""
+                WITH q AS (SELECT %s::vector(768) AS qv)
+                SELECT c.chunk_id,
+                       c.report_id,
+                       pgp_sym_decrypt(c.chunk_text_encrypted, %s)::text AS chunk_text,
+                       c.source_metadata,
+                       (c.report_vector <=> q.qv) AS distance
+                FROM report_chunks c, q
+                WHERE c.report_id IN ({placeholders})
+                ORDER BY c.report_vector <=> q.qv
+                LIMIT 5
+            """
+            cur.execute(similarity_sql, (embedding_literal, ENCRYPTION_KEY, *report_ids))
+            for row in cur.fetchall():
+                if row and row[2]:
+                    similarity_chunks.append((row[0], row[1], row[2], row[3]))
         
         # 3c. Also search clinical annotations for allergy mentions
         cur.execute(
@@ -1241,7 +1309,7 @@ async def safety_check(
         cur.close()
         conn.close()
         
-        if not all_chunks and not annotation_rows:
+        if not all_chunks and not annotation_rows and not summary_text:
             # No allergy information found
             return SafetyCheckResponse(
                 has_allergy=False,
@@ -1256,6 +1324,27 @@ async def safety_check(
         warnings = []
         allergy_details_parts = []
         citations = []
+
+        # 5x. Check summary text
+        if summary_text:
+            summary_lower = summary_text.lower()
+            if drug_lower in summary_lower:
+                # Check if it's in an allergy context
+                # Simple heuristic: look for allergy keywords in the same line or sentence
+                lines = summary_text.split('\n')
+                for line in lines:
+                    line_lower = line.lower()
+                    if drug_lower in line_lower and any(kw in line_lower for kw in allergy_keywords):
+                        has_allergy = True
+                        warnings.append(f"⚠️ Patient summary mentions {drug_name} allergy")
+                        allergy_details_parts.append(line.strip())
+                        citations.append({
+                            "source": "Patient Summary",
+                            "text": line.strip(),
+                            "date": "Current"
+                        })
+                        break # Found it in summary
+
         
         # 5a. Check annotations first (most recent clinical notes)
         for annotation_id, doctor_note, created_at in annotation_rows:
@@ -1308,15 +1397,21 @@ async def safety_check(
             allergy_details = "Allergy history found in patient records. Please review citations for details."
             warnings.append("Patient has documented allergies in medical history - review before prescribing")
         
-        return SafetyCheckResponse(
+        response = SafetyCheckResponse(
             has_allergy=has_allergy or len(warnings) > 0,
             warnings=warnings,
             allergy_details=allergy_details,
             citations=citations
         )
+        logger.info(f"   ✅ Safety check complete - returning response:")
+        logger.info(f"      has_allergy: {response.has_allergy}")
+        logger.info(f"      warnings: {response.warnings}")
+        logger.info(f"      allergy_details: {response.allergy_details}")
+        logger.info(f"      citations count: {len(response.citations)}")
+        return response
         
     except HTTPException:
         raise
     except Exception as e:
-        logger.exception(f"Error in safety check for patient {patient_id}")
+        logger.exception(f"❌ Error in safety check for patient {patient_id}")
         raise HTTPException(status_code=500, detail=f"Safety check error: {e}")

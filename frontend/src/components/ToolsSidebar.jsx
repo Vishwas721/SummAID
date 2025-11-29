@@ -66,28 +66,76 @@ export function ToolsSidebar({ patientId }) {
   }
 
   const handleSafetyCheck = async () => {
-    if (!patientId || !drugName.trim()) return
-    setSafetyCheckLoading(true)
-    setSafetyWarning(null)
-    setSafetyCheckDone(false)
+    console.log('🚀 handleSafetyCheck called in ToolsSidebar')
+    console.log('   patientId:', patientId)
+    console.log('   drugName:', drugName)
+    
+    if (!patientId || !drugName.trim()) {
+      console.log('❌ Early return - missing patientId or drugName')
+      return
+    }
+    
+    console.log('✅ Starting safety check...')
     
     try {
-      const url = `${import.meta.env.VITE_API_URL}/safety-check/${encodeURIComponent(patientId)}`
-      const response = await axios.post(url, {
-        drug_name: drugName,
-        dosage: dosage || null,
-        frequency: frequency || null,
-        duration: duration || null
-      })
-      const data = response.data
-      setSafetyWarning(data.warning || null)
-      setSafetyCheckDone(true)
-    } catch (e) {
-      console.error('Safety check error', e)
-      setSafetyWarning(`Error: ${e.response?.data?.detail || e.message}`)
+      // Reset states
+      console.log('   Resetting states...')
+      setSafetyCheckLoading(true)
+      setSafetyWarning(null)
       setSafetyCheckDone(false)
-    } finally {
+      
+      const url = `${import.meta.env.VITE_API_URL}/safety-check/${encodeURIComponent(patientId)}`
+      const payload = { drug_name: drugName.trim() }
+      console.log('📡 Making API request:')
+      console.log('   URL:', url)
+      console.log('   Payload:', payload)
+      
+      const response = await axios.post(url, payload)
+      console.log('📥 Response received:')
+      console.log('   Status:', response.status)
+      console.log('   Full response:', response)
+      
+      const data = response.data
+      console.log('📦 Response data:', JSON.stringify(data, null, 2))
+      console.log('   has_allergy:', data.has_allergy)
+      console.log('   warnings:', data.warnings)
+      console.log('   allergy_details:', data.allergy_details)
+      
+      // Process response
+      let newWarning = null
+      if (data.has_allergy || data.warnings?.length > 0) {
+        console.log('⚠️ Allergies/warnings detected')
+        newWarning = {
+          hasAllergy: data.has_allergy,
+          warnings: data.warnings || [],
+          allergyDetails: data.allergy_details || ''
+        }
+        console.log('   Warning object:', newWarning)
+      } else {
+        console.log('✅ No allergies found - safe')
+      }
+      
+      // Update states
+      console.log('🔄 Updating states: safetyCheckDone=true, safetyCheckLoading=false')
+      setSafetyCheckDone(true)
       setSafetyCheckLoading(false)
+      setSafetyWarning(newWarning)
+      
+      console.log('✅ Safety check complete!')
+    } catch (e) {
+      console.error('❌ Safety check error:', e)
+      console.error('   Error message:', e.message)
+      console.error('   Error response:', e.response?.data)
+      
+      const errorWarning = {
+        hasAllergy: false,
+        warnings: ['Safety check failed: ' + (e.response?.data?.detail || e.message)],
+        allergyDetails: ''
+      }
+      console.log('   Setting error warning:', errorWarning)
+      setSafetyCheckDone(true)
+      setSafetyCheckLoading(false)
+      setSafetyWarning(errorWarning)
     }
   }
 
@@ -264,22 +312,51 @@ export function ToolsSidebar({ patientId }) {
                   )}
                 </button>
 
-                {safetyWarning && (
-                  <div className={cn(
-                    'p-4 rounded-lg border',
-                    safetyWarning.toLowerCase().includes('no') || safetyWarning.toLowerCase().includes('safe')
-                      ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800'
-                      : 'bg-yellow-50 dark:bg-yellow-900/20 border-yellow-200 dark:border-yellow-800'
-                  )}>
+                {/* Success banner when safe */}
+                {safetyCheckDone && !safetyWarning && (
+                  <div className="p-4 rounded-lg border bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800">
                     <div className="flex items-start gap-2">
-                      {safetyWarning.toLowerCase().includes('no') || safetyWarning.toLowerCase().includes('safe') ? (
-                        <CheckCircle2 className="h-5 w-5 text-green-600 dark:text-green-400 flex-shrink-0 mt-0.5" />
-                      ) : (
-                        <AlertTriangle className="h-5 w-5 text-yellow-600 dark:text-yellow-400 flex-shrink-0 mt-0.5" />
-                      )}
+                      <CheckCircle2 className="h-5 w-5 text-green-600 dark:text-green-400 flex-shrink-0 mt-0.5" />
                       <div>
-                        <p className="text-sm font-semibold text-slate-800 dark:text-slate-200 mb-1">Safety Analysis</p>
-                        <p className="text-xs text-slate-700 dark:text-slate-300">{safetyWarning}</p>
+                        <p className="text-sm font-semibold text-green-800 dark:text-green-200 mb-1">✅ Safe</p>
+                        <p className="text-xs text-green-700 dark:text-green-300">No documented allergies found for this drug.</p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+                
+                {/* Allergy warnings */}
+                {safetyWarning && safetyWarning.hasAllergy && (
+                  <div className="p-4 rounded-lg border bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800">
+                    <div className="flex items-start gap-2">
+                      <AlertTriangle className="h-5 w-5 text-red-600 dark:text-red-400 flex-shrink-0 mt-0.5" />
+                      <div>
+                        <p className="text-sm font-semibold text-red-800 dark:text-red-200 mb-1">⚠️ Allergy Alert</p>
+                        <p className="text-xs text-red-700 dark:text-red-300 mb-2">{safetyWarning.allergyDetails}</p>
+                        {safetyWarning.warnings && safetyWarning.warnings.length > 0 && (
+                          <ul className="space-y-1">
+                            {safetyWarning.warnings.map((w, i) => (
+                              <li key={i} className="text-xs text-red-600 dark:text-red-400">• {w}</li>
+                            ))}
+                          </ul>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
+                
+                {/* General warnings (no specific allergy) */}
+                {safetyWarning && !safetyWarning.hasAllergy && safetyWarning.warnings && safetyWarning.warnings.length > 0 && (
+                  <div className="p-4 rounded-lg border bg-yellow-50 dark:bg-yellow-900/20 border-yellow-200 dark:border-yellow-800">
+                    <div className="flex items-start gap-2">
+                      <AlertTriangle className="h-5 w-5 text-yellow-600 dark:text-yellow-400 flex-shrink-0 mt-0.5" />
+                      <div>
+                        <p className="text-sm font-semibold text-yellow-800 dark:text-yellow-200 mb-1">⚠️ Warnings</p>
+                        <ul className="space-y-1">
+                          {safetyWarning.warnings.map((w, i) => (
+                            <li key={i} className="text-xs text-yellow-700 dark:text-yellow-300">• {w}</li>
+                          ))}
+                        </ul>
                       </div>
                     </div>
                   </div>

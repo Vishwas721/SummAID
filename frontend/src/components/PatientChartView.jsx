@@ -17,7 +17,12 @@ pdfjs.GlobalWorkerOptions.workerSrc = new URL(
   import.meta.url
 ).toString()
 
+console.log('📄 PatientChartView.jsx module loaded')
+console.log('   API URL:', import.meta.env.VITE_API_URL)
+
 export function PatientChartView({ patientId }) {
+  console.log('🏗️ PatientChartView component render - patientId:', patientId)
+  
   const [summary, setSummary] = useState('')
   const [citations, setCitations] = useState([])
   const [expandedCitationIds, setExpandedCitationIds] = useState(new Set())
@@ -55,6 +60,11 @@ export function PatientChartView({ patientId }) {
   const [safetyCheckLoading, setSafetyCheckLoading] = useState(false)
   const [safetyWarning, setSafetyWarning] = useState(null)
   const [safetyCheckDone, setSafetyCheckDone] = useState(false)
+
+  // Debug logging for safety check state changes
+  useEffect(() => {
+    console.log('🔍 Safety Check State Update:', { safetyCheckLoading, safetyCheckDone, safetyWarning })
+  }, [safetyCheckLoading, safetyCheckDone, safetyWarning])
   
   // Annotations state (Doctor view)
   const [noteText, setNoteText] = useState('')
@@ -301,53 +311,100 @@ export function PatientChartView({ patientId }) {
 
   // Handle safety check for prescription
   const handleSafetyCheck = async () => {
-    if (!patientId || !drugName.trim()) return
+    console.log('🚀 handleSafetyCheck called')
+    console.log('   patientId:', patientId)
+    console.log('   drugName:', drugName)
+    console.log('   drugName.trim():', drugName.trim())
     
-    setSafetyCheckLoading(true)
-    setSafetyWarning(null)
-    setSafetyCheckDone(false)
+    if (!patientId || !drugName.trim()) {
+      console.log('❌ Early return - missing patientId or drugName')
+      return
+    }
+    
+    console.log('✅ Starting safety check...')
     
     try {
-      const url = `${import.meta.env.VITE_API_URL}/safety-check/${encodeURIComponent(patientId)}`
-      const response = await axios.post(url, {
-        drug_name: drugName.trim()
-      })
-      const data = response.data
+      // Reset states synchronously
+      console.log('   Resetting all states...')
+      setSafetyCheckLoading(true)
+      setSafetyWarning(null)
+      setSafetyCheckDone(false)
       
-      setSafetyCheckDone(true)
+      const url = `${import.meta.env.VITE_API_URL}/safety-check/${encodeURIComponent(patientId)}`
+      const payload = { drug_name: drugName.trim() }
+      console.log('📡 Making API request:')
+      console.log('   URL:', url)
+      console.log('   Payload:', payload)
+      
+      const response = await axios.post(url, payload)
+      console.log('📥 Response received:')
+      console.log('   Status:', response.status)
+      console.log('   Full response:', response)
+      
+      const data = response.data
+      console.log('📦 Response data:', JSON.stringify(data, null, 2))
+      console.log('   has_allergy:', data.has_allergy)
+      console.log('   warnings:', data.warnings)
+      console.log('   allergy_details:', data.allergy_details)
+      
+      // Process response and update states together
+      let newWarning = null
       if (data.has_allergy || data.warnings?.length > 0) {
-        setSafetyWarning({
+        console.log('⚠️ Allergies/warnings detected - preparing warning state')
+        newWarning = {
           hasAllergy: data.has_allergy,
           warnings: data.warnings || [],
           allergyDetails: data.allergy_details || ''
-        })
+        }
+        console.log('   Warning object:', newWarning)
+      } else {
+        console.log('✅ No allergies found - will show GREEN SUCCESS banner')
       }
+      
+      // Update all states together
+      console.log('🔄 Updating states: safetyCheckDone=true, safetyCheckLoading=false')
+      setSafetyCheckDone(true)
+      setSafetyCheckLoading(false)
+      if (newWarning) {
+        console.log('   Also setting safetyWarning:', newWarning)
+        setSafetyWarning(newWarning)
+      } else {
+        console.log('   safetyWarning remains null (safe)')
+      }
+      
+      console.log('✅ Safety check complete!')
     } catch (e) {
-      console.error('Safety check error', e)
-      setSafetyWarning({
+      console.error('❌ Safety check error:', e)
+      console.error('   Error message:', e.message)
+      console.error('   Error response:', e.response)
+      console.error('   Error response data:', e.response?.data)
+      
+      const errorWarning = {
         hasAllergy: false,
         warnings: ['Safety check failed: ' + (e.response?.data?.detail || e.message)],
         allergyDetails: ''
-      })
-    } finally {
+      }
+      console.log('   Setting error warning:', errorWarning)
+      setSafetyCheckDone(true)
       setSafetyCheckLoading(false)
+      setSafetyWarning(errorWarning)
     }
   }
 
   // Generate prescription PDF
   const handlePrintPrescription = () => {
     if (!drugName.trim()) return
-    
+
     const doc = new jsPDF()
     const margin = 20
     let y = margin
-    
+
     // Header
     doc.setFontSize(18)
     doc.setFont(undefined, 'bold')
     doc.text('PRESCRIPTION', 105, y, { align: 'center' })
     y += 15
-    
+
     // Patient info
     doc.setFontSize(11)
     doc.setFont(undefined, 'normal')
@@ -355,13 +412,13 @@ export function PatientChartView({ patientId }) {
     y += 7
     doc.text(`Date: ${new Date().toLocaleDateString()}`, margin, y)
     y += 15
-    
+
     // Rx symbol
     doc.setFontSize(24)
     doc.setFont(undefined, 'bold')
     doc.text('Rx', margin, y)
     y += 15
-    
+
     // Prescription details
     doc.setFontSize(12)
     doc.setFont(undefined, 'normal')
@@ -379,7 +436,7 @@ export function PatientChartView({ patientId }) {
       doc.text(`Duration: ${duration}`, margin + 10, y)
       y += 8
     }
-    
+
     // Safety warning if present
     if (safetyWarning && safetyWarning.hasAllergy) {
       y += 10
@@ -393,16 +450,43 @@ export function PatientChartView({ patientId }) {
       doc.setTextColor(0, 0, 0)
       y += 10
     }
-    
+
     // Signature
     y += 20
     doc.setFontSize(10)
     doc.text('_________________________', margin, y)
     y += 7
     doc.text('Doctor Signature', margin, y)
-    
-    // Download
-    doc.save(`prescription_${drugName.replace(/\s+/g, '_')}_${new Date().toISOString().split('T')[0]}.pdf`)
+
+    // Prepare filename
+    const fname = `prescription_${drugName.replace(/\s+/g, '_')}_${new Date().toISOString().split('T')[0]}.pdf`
+
+    try {
+      // Try to open PDF in new window and trigger print
+      const blob = doc.output('blob')
+      const url = URL.createObjectURL(blob)
+      const win = window.open('about:blank')
+      if (win) {
+        // Write an iframe hosting the blob URL so browser handles rendering/printing
+        win.document.write(`<!doctype html><html><head><title>${fname}</title></head><body style="margin:0">
+          <iframe src="${url}" style="border:0; width:100%; height:100vh;"></iframe>
+          </body></html>`)
+        win.document.close()
+        // Attempt to focus and print (may be blocked without user gesture in some browsers)
+        win.focus()
+        // Give the iframe some time to load before calling print
+        setTimeout(() => {
+          try { win.print() } catch (e) { console.warn('Auto-print failed, user can print manually', e) }
+        }, 500)
+      } else {
+        // Popup blocked — fallback to download
+        doc.save(fname)
+      }
+    } catch (e) {
+      console.error('Prescription PDF generation/display error', e)
+      // Last-resort fallback to download
+      try { doc.save(fname) } catch (_) { alert('Failed to generate prescription PDF') }
+    }
   }
 
   const handleSendMessage = async () => {
@@ -1168,22 +1252,20 @@ export function PatientChartView({ patientId }) {
                     Rx
                   </button>
                 </div>
-                {activeTab === 'summary' && (
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={handleDownloadPdf}
-                      disabled={!summary}
-                      className={cn(
-                        "px-3 py-1.5 text-xs font-medium rounded-md transition-all",
-                        !summary
-                          ? "bg-slate-100 dark:bg-slate-700 text-slate-400 cursor-not-allowed"
-                          : "bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-600"
-                      )}
-                    >
-                      Export PDF
-                    </button>
-                  </div>
-                )}
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={handleDownloadPdf}
+                    disabled={!summary}
+                    className={cn(
+                      "px-3 py-1.5 text-xs font-medium rounded-md transition-all",
+                      !summary
+                        ? "bg-slate-100 dark:bg-slate-700 text-slate-400 cursor-not-allowed"
+                        : "bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-600"
+                    )}
+                  >
+                    Export PDF
+                  </button>
+                </div>
               </div>
             </div>
             
@@ -1493,7 +1575,25 @@ export function PatientChartView({ patientId }) {
                         Complete the form below and run a safety check before printing
                       </p>
                     </div>
+                    
+                    {/* DEBUG STATE PANEL - Remove this after debugging */}
+                    <div className="bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-md p-2 text-xs font-mono">
+                      <div className="font-bold text-gray-700 dark:text-gray-300 mb-1">🐛 Debug State:</div>
+                      <div className="space-y-0.5 text-gray-600 dark:text-gray-400">
+                        <div>safetyCheckLoading: <span className="font-bold text-blue-600">{String(safetyCheckLoading)}</span></div>
+                        <div>safetyCheckDone: <span className="font-bold text-green-600">{String(safetyCheckDone)}</span></div>
+                        <div>safetyWarning: <span className="font-bold text-orange-600">{safetyWarning ? JSON.stringify(safetyWarning) : 'null'}</span></div>
+                      </div>
+                    </div>
+                    
                     {/* Safety Status Banner */}
+                    {(() => {
+                      console.log('🎨 Rendering safety banners...')
+                      console.log('   safetyCheckDone:', safetyCheckDone)
+                      console.log('   safetyWarning:', safetyWarning)
+                      console.log('   Should show green banner:', safetyCheckDone && !safetyWarning)
+                      return null
+                    })()}
                     {safetyCheckDone && !safetyWarning && (
                       <div className="bg-green-50 dark:bg-green-900/20 border border-green-300 dark:border-green-700 rounded-md p-3 flex items-center gap-2">
                         <CheckCircle2 className="h-4 w-4 text-green-600 dark:text-green-400" />
@@ -1534,8 +1634,11 @@ export function PatientChartView({ patientId }) {
                         type="text"
                         value={drugName}
                         onChange={(e) => {
+                          console.log('💊 Drug name changed:', e.target.value)
                           setDrugName(e.target.value)
+                          console.log('   Resetting safetyCheckDone = false')
                           setSafetyCheckDone(false)
+                          console.log('   Resetting safetyWarning = null')
                           setSafetyWarning(null)
                         }}
                         placeholder="e.g., Amoxicillin"
@@ -1588,12 +1691,21 @@ export function PatientChartView({ patientId }) {
                     {/* Safety & Print Actions */}
                     <div className="flex gap-2">
                       <button
-                        onClick={handleSafetyCheck}
+                        onClick={() => {
+                          alert('Button clicked! Check console for logs.')
+                          console.log('🖱️ Safety Check button clicked')
+                          console.log('drugName:', drugName)
+                          console.log('patientId:', patientId)
+                          console.log('safetyCheckLoading:', safetyCheckLoading)
+                          handleSafetyCheck()
+                        }}
                         disabled={!drugName.trim() || safetyCheckLoading}
                         className={cn(
                           "flex-1 px-4 py-2.5 text-sm font-medium rounded-md transition-all flex items-center justify-center gap-2",
                           !drugName.trim() || safetyCheckLoading
                             ? "bg-slate-200 dark:bg-slate-700 text-slate-400 cursor-not-allowed"
+                            : safetyCheckDone
+                            ? "bg-green-500 text-white hover:bg-green-600"
                             : "bg-orange-500 text-white hover:bg-orange-600"
                         )}
                       >
@@ -1601,6 +1713,11 @@ export function PatientChartView({ patientId }) {
                           <>
                             <Loader2 className="h-4 w-4 animate-spin" />
                             Checking...
+                          </>
+                        ) : safetyCheckDone ? (
+                          <>
+                            <CheckCircle2 className="h-4 w-4" />
+                            Safety Check Complete
                           </>
                         ) : (
                           <>
