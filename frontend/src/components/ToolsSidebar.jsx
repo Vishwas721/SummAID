@@ -180,6 +180,58 @@ export function ToolsSidebar({ patientId }) {
     }
   }
 
+  // Resolve a PDF/URL from a citation object (similar to SummaryPanel)
+  const getCitationUrl = (c) => {
+    if (!c) return null
+    return (
+      c.pdf_url ||
+      c.source_url ||
+      (c.report_id ? `${import.meta.env.VITE_API_URL}/report-file/${encodeURIComponent(c.report_id)}` : null)
+    )
+  }
+
+  // Render citations: dedupe, link, and limit displayed items
+  const renderCitations = (citations) => {
+    if (!Array.isArray(citations) || citations.length === 0) return null
+
+    const seen = new Set()
+    const unique = []
+    for (const c of citations) {
+      const key = `${c.report_id || c.source_url || c.pdf_url || ''}::${c.page_num || c.page || ''}::${c.chunk_index || c.chunk_id || ''}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      unique.push(c)
+    }
+
+    const MAX_SHOW = 6
+    const shown = unique.slice(0, MAX_SHOW)
+
+    return (
+      <div className="mt-2 pt-2 border-t border-slate-200 dark:border-slate-600 text-xs opacity-90">
+        <p className="font-semibold mb-1">Sources:</p>
+        {shown.map((c, i) => {
+          const url = getCitationUrl(c)
+          const label = c.report_name || c.source_name || `Page ${c.page_num || c.page || '?'} (chunk ${c.chunk_index || c.chunk_id || '?'})`
+          return (
+            <p key={i} className="truncate">
+              {url ? (
+                <a href={url} target="_blank" rel="noreferrer" className="text-blue-600 dark:text-blue-400 hover:underline">
+                  • {label}
+                </a>
+              ) : (
+                <span>• {label}</span>
+              )}
+            </p>
+          )
+        })}
+
+        {unique.length > MAX_SHOW && (
+          <p className="text-slate-500 dark:text-slate-400">+{unique.length - MAX_SHOW} more</p>
+        )}
+      </div>
+    )
+  }
+
   const handleSafetyCheck = async () => {
     console.log('🚀 handleSafetyCheck called in ToolsSidebar')
     console.log('   patientId:', patientId)
@@ -313,12 +365,7 @@ export function ToolsSidebar({ patientId }) {
                 )}>
                   <p className="whitespace-pre-wrap">{msg.content}</p>
                   {msg.citations && msg.citations.length > 0 && (
-                    <div className="mt-2 pt-2 border-t border-slate-200 dark:border-slate-600 text-xs opacity-80">
-                      <p className="font-semibold mb-1">Sources:</p>
-                      {msg.citations.map((c, i) => (
-                        <p key={i}>• Page {c.page_num || '?'} (chunk {c.chunk_index || '?'})</p>
-                      ))}
-                    </div>
+                    renderCitations(msg.citations)
                   )}
                 </div>
               ))}
