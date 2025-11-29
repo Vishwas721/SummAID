@@ -1,28 +1,31 @@
 import { useState, useEffect, useRef } from 'react'
-import { MessageSquare, Send, FileText, Pill, Loader2, AlertTriangle, CheckCircle2, Printer, Download, Mic } from 'lucide-react'
+import { MessageSquare, Send, FileText, Pill, Loader2, AlertTriangle, CheckCircle2, Printer, Download, Mic, X } from 'lucide-react'
 import { cn } from '../lib/utils'
 import axios from 'axios'
 import jsPDF from 'jspdf'
 import { useSpeechRecognition } from '../hooks/useSpeechRecognition'
+import { SummaryPanel } from './SummaryPanel'
 
 export function ToolsSidebar({ patientId }) {
   const [userRole] = useState(localStorage.getItem('user_role') || 'DOCTOR')
+
+  // Active tab
   const [activeTab, setActiveTab] = useState('chat')
-  
-  // Chat state
+
+  // Chat
   const [chatInput, setChatInput] = useState('')
   const [messages, setMessages] = useState([])
   const [chatLoading, setChatLoading] = useState(false)
   const [chatError, setChatError] = useState(null)
-  
-  // Speech recognition
+
+  // Speech
   const { isListening, transcript, startListening, stopListening, resetTranscript, isSupported, error: speechError } = useSpeechRecognition()
-  
-  // Scroll reference for auto-scroll to bottom
-  const messagesEndRef = useRef(null)
   const lastProcessedTranscriptRef = useRef('')
-  
-  // Rx state (DOCTOR only)
+
+  // Scroll anchor
+  const messagesEndRef = useRef(null)
+
+  // Rx
   const [drugName, setDrugName] = useState('')
   const [dosage, setDosage] = useState('')
   const [frequency, setFrequency] = useState('')
@@ -30,547 +33,295 @@ export function ToolsSidebar({ patientId }) {
   const [safetyCheckLoading, setSafetyCheckLoading] = useState(false)
   const [safetyWarning, setSafetyWarning] = useState(null)
   const [safetyCheckDone, setSafetyCheckDone] = useState(false)
-  
-  // Update chat input when speech recognition provides transcript
+
   useEffect(() => {
     if (transcript && transcript !== lastProcessedTranscriptRef.current) {
       const newText = transcript.substring(lastProcessedTranscriptRef.current.length)
-      if (newText) {
-        setChatInput(prev => prev + newText)
-        lastProcessedTranscriptRef.current = transcript
-      }
+      if (newText) setChatInput((p) => p + newText)
+      lastProcessedTranscriptRef.current = transcript
     }
   }, [transcript])
-  
-  // Reset transcript tracking when recognition stops
+
   useEffect(() => {
     if (!isListening) {
       lastProcessedTranscriptRef.current = ''
       resetTranscript()
     }
   }, [isListening, resetTranscript])
-  
-  // Auto-scroll to bottom when messages change
+
   useEffect(() => {
-    // Multiple scroll attempts to ensure it works
-    if (messagesEndRef.current) {
-      // Immediate scroll
-      messagesEndRef.current.scrollIntoView({ behavior: 'auto', block: 'end' })
-      
-      // Delayed scroll for dynamic content
-      const timer = setTimeout(() => {
-        messagesEndRef.current?.scrollIntoView({ behavior: 'auto', block: 'end' })
-      }, 50)
-      return () => clearTimeout(timer)
-    }
+    messagesEndRef.current?.scrollIntoView({ behavior: 'auto', block: 'end' })
   }, [messages, chatLoading])
-  
-  // MA role should not see this sidebar at all
-  if (userRole !== 'DOCTOR') {
-    return null
-  }
+
+  if (userRole !== 'DOCTOR') return null
+
+
 
   const handleSendMessage = async () => {
     if (!patientId || !chatInput.trim() || chatLoading) return
-    
-    // Stop any ongoing speech recognition and clear transcript
-    if (isListening) {
-      stopListening()
-    }
+    if (isListening) stopListening()
     resetTranscript()
-    
-    const userMessage = chatInput.trim()
+
+    const text = chatInput.trim()
     setChatInput('')
-    setChatError(null)
-    
-    setMessages(prev => [...prev, { role: 'user', content: userMessage }])
+    setMessages((p) => [...p, { role: 'user', content: text }])
     setChatLoading(true)
-    
+    setChatError(null)
+
     try {
       const url = `${import.meta.env.VITE_API_URL}/chat/${encodeURIComponent(patientId)}`
-      const response = await axios.post(url, {
-        question: userMessage,
-        max_chunks: 15,
-        max_context_chars: 12000
-      })
-      const data = response.data
-      
-      setMessages(prev => [...prev, { 
-        role: 'ai', 
-        content: data.answer || '(No answer returned)',
-        citations: Array.isArray(data.citations) ? data.citations : []
-      }])
+      const resp = await axios.post(url, { question: text, max_chunks: 15, max_context_chars: 12000 })
+      const data = resp.data || {}
+      setMessages((p) => [...p, { role: 'ai', content: data.answer || '(No answer)', citations: Array.isArray(data.citations) ? data.citations : [] }])
     } catch (e) {
-      console.error('Chat error', e)
-      const errorMsg = e.response?.data?.detail || e.message || 'Unknown error'
-      setChatError(errorMsg)
-      setMessages(prev => [...prev, {
-        role: 'ai',
-        content: `Sorry, I encountered an error: ${errorMsg}`,
-        isError: true
-      }])
+      const err = e.response?.data?.detail || e.message || 'Unknown error'
+      setChatError(err)
+      setMessages((p) => [...p, { role: 'ai', content: `Error: ${err}`, isError: true }])
     } finally {
       setChatLoading(false)
     }
   }
 
-  const handlePrintPrescription = () => {
-    if (!drugName.trim()) return
-
-    const doc = new jsPDF()
-    const margin = 20
-    let y = margin
-
-    // Header
-    doc.setFontSize(18)
-    doc.setFont(undefined, 'bold')
-    doc.text('PRESCRIPTION', 105, y, { align: 'center' })
-    y += 15
-
-    // Patient info
-    doc.setFontSize(11)
-    doc.setFont(undefined, 'normal')
-    doc.text(`Patient ID: ${patientId}`, margin, y)
-    y += 10
-    doc.text(`Date: ${new Date().toLocaleDateString()}`, margin, y)
-    y += 15
-
-    // Prescription details
-    doc.setFontSize(13)
-    doc.setFont(undefined, 'bold')
-    doc.text('Medication:', margin, y)
-    y += 8
-
-    doc.setFontSize(11)
-    doc.setFont(undefined, 'normal')
-    doc.text(`Drug: ${drugName}`, margin + 5, y)
-    y += 7
-    if (dosage) {
-      doc.text(`Dosage: ${dosage}`, margin + 5, y)
-      y += 7
-    }
-    if (frequency) {
-      doc.text(`Frequency: ${frequency}`, margin + 5, y)
-      y += 7
-    }
-    if (duration) {
-      doc.text(`Duration: ${duration}`, margin + 5, y)
-      y += 7
-    }
-
-    // Footer
-    y += 20
-    doc.setFontSize(9)
-    doc.setFont(undefined, 'italic')
-    doc.text('Generated by SummAID', margin, y)
-
-    // Open in new window for printing
-    const pdfBlob = doc.output('blob')
-    const blobUrl = URL.createObjectURL(pdfBlob)
-    const printWindow = window.open(blobUrl, '_blank')
-    if (printWindow) {
-      printWindow.onload = () => {
-        setTimeout(() => {
-          printWindow.print()
-        }, 250)
-      }
-    } else {
-      // Fallback: download
-      doc.save(`prescription_patient_${patientId}_${Date.now()}.pdf`)
-    }
-  }
-
-  // Resolve a PDF/URL from a citation object (similar to SummaryPanel)
   const getCitationUrl = (c) => {
     if (!c) return null
-    return (
-      c.pdf_url ||
-      c.source_url ||
-      (c.report_id ? `${import.meta.env.VITE_API_URL}/report-file/${encodeURIComponent(c.report_id)}` : null)
-    )
+    return c.pdf_url || c.source_url || (c.report_id ? `${import.meta.env.VITE_API_URL}/report-file/${encodeURIComponent(c.report_id)}` : null)
   }
 
-  // Render citations: dedupe, link, and limit displayed items
   const renderCitations = (citations) => {
     if (!Array.isArray(citations) || citations.length === 0) return null
-
-    const seen = new Set()
-    const unique = []
+    const seen = new Set(); const uniq = []
     for (const c of citations) {
-      const key = `${c.report_id || c.source_url || c.pdf_url || ''}::${c.page_num || c.page || ''}::${c.chunk_index || c.chunk_id || ''}`
+      const key = `${c.report_id||''}::${c.page_num||c.page||''}::${c.chunk_index||c.chunk_id||''}`
       if (seen.has(key)) continue
-      seen.add(key)
-      unique.push(c)
+      seen.add(key); uniq.push(c)
     }
-
-    const MAX_SHOW = 6
-    const shown = unique.slice(0, MAX_SHOW)
-
+    const MAX = 6
     return (
       <div className="mt-2 pt-2 border-t border-slate-200 dark:border-slate-600 text-xs opacity-90">
         <p className="font-semibold mb-1">Sources:</p>
-        {shown.map((c, i) => {
+        {uniq.slice(0, MAX).map((c, i) => {
           const url = getCitationUrl(c)
-          const label = c.report_name || c.source_name || `Page ${c.page_num || c.page || '?'} (chunk ${c.chunk_index || c.chunk_id || '?'})`
+          const label = c.report_name || c.source_name || `Page ${c.page_num||c.page||'?'} (chunk ${c.chunk_index||c.chunk_id||'?'})`
           return (
-            <p key={i} className="truncate">
-              {url ? (
-                <a href={url} target="_blank" rel="noreferrer" className="text-blue-600 dark:text-blue-400 hover:underline">
-                  • {label}
-                </a>
-              ) : (
-                <span>• {label}</span>
-              )}
-            </p>
+            <p key={i} className="truncate">{url ? <a href={url} target="_blank" rel="noreferrer" className="text-blue-600 dark:text-blue-400 hover:underline">• {label}</a> : <span>• {label}</span>}</p>
           )
         })}
-
-        {unique.length > MAX_SHOW && (
-          <p className="text-slate-500 dark:text-slate-400">+{unique.length - MAX_SHOW} more</p>
-        )}
+        {uniq.length > MAX && <p className="text-slate-500 dark:text-slate-400">+{uniq.length - MAX} more</p>}
       </div>
     )
   }
 
   const handleSafetyCheck = async () => {
-    console.log('🚀 handleSafetyCheck called in ToolsSidebar')
-    console.log('   patientId:', patientId)
-    console.log('   drugName:', drugName)
-    
-    if (!patientId || !drugName.trim()) {
-      console.log('❌ Early return - missing patientId or drugName')
-      return
-    }
-    
-    console.log('✅ Starting safety check...')
-    
+    if (!patientId || !drugName.trim()) return
+    setSafetyCheckLoading(true); setSafetyWarning(null); setSafetyCheckDone(false)
     try {
-      // Reset states
-      console.log('   Resetting states...')
-      setSafetyCheckLoading(true)
-      setSafetyWarning(null)
-      setSafetyCheckDone(false)
-      
       const url = `${import.meta.env.VITE_API_URL}/safety-check/${encodeURIComponent(patientId)}`
-      const payload = { drug_name: drugName.trim() }
-      console.log('📡 Making API request:')
-      console.log('   URL:', url)
-      console.log('   Payload:', payload)
-      
-      const response = await axios.post(url, payload)
-      console.log('📥 Response received:')
-      console.log('   Status:', response.status)
-      console.log('   Full response:', response)
-      
-      const data = response.data
-      console.log('📦 Response data:', JSON.stringify(data, null, 2))
-      console.log('   has_allergy:', data.has_allergy)
-      console.log('   warnings:', data.warnings)
-      console.log('   allergy_details:', data.allergy_details)
-      
-      // Process response
-      let newWarning = null
-      if (data.has_allergy || data.warnings?.length > 0) {
-        console.log('⚠️ Allergies/warnings detected')
-        newWarning = {
-          hasAllergy: data.has_allergy,
-          warnings: data.warnings || [],
-          allergyDetails: data.allergy_details || ''
-        }
-        console.log('   Warning object:', newWarning)
-      } else {
-        console.log('✅ No allergies found - safe')
-      }
-      
-      // Update states
-      console.log('🔄 Updating states: safetyCheckDone=true, safetyCheckLoading=false')
-      setSafetyCheckDone(true)
-      setSafetyCheckLoading(false)
+      const resp = await axios.post(url, { drug_name: drugName.trim() })
+      const data = resp.data || {}
+      const newWarning = (data.has_allergy || (data.warnings && data.warnings.length)) ? { hasAllergy: data.has_allergy, warnings: data.warnings || [], allergyDetails: data.allergy_details || '' } : null
       setSafetyWarning(newWarning)
-      
-      console.log('✅ Safety check complete!')
-    } catch (e) {
-      console.error('❌ Safety check error:', e)
-      console.error('   Error message:', e.message)
-      console.error('   Error response:', e.response?.data)
-      
-      const errorWarning = {
-        hasAllergy: false,
-        warnings: ['Safety check failed: ' + (e.response?.data?.detail || e.message)],
-        allergyDetails: ''
-      }
-      console.log('   Setting error warning:', errorWarning)
       setSafetyCheckDone(true)
+    } catch (e) {
+      setSafetyWarning({ hasAllergy: false, warnings: ['Safety check failed: ' + (e.response?.data?.detail || e.message)], allergyDetails: '' })
+      setSafetyCheckDone(true)
+    } finally {
       setSafetyCheckLoading(false)
-      setSafetyWarning(errorWarning)
     }
   }
 
+  const handlePrintPrescription = () => {
+    if (!drugName.trim()) return
+    const doc = new jsPDF(); const margin = 20; let y = margin
+    doc.setFontSize(18); doc.setFont(undefined, 'bold'); doc.text('PRESCRIPTION', 105, y, { align: 'center' }); y += 15
+    doc.setFontSize(11); doc.setFont(undefined, 'normal'); doc.text(`Patient ID: ${patientId}`, margin, y); y += 10
+    doc.text(`Date: ${new Date().toLocaleDateString()}`, margin, y); y += 15
+    doc.setFontSize(13); doc.setFont(undefined, 'bold'); doc.text('Medication:', margin, y); y += 8
+    doc.setFontSize(11); doc.setFont(undefined, 'normal'); doc.text(`Drug: ${drugName}`, margin + 5, y); y += 7
+    if (dosage) { doc.text(`Dosage: ${dosage}`, margin + 5, y); y += 7 }
+    if (frequency) { doc.text(`Frequency: ${frequency}`, margin + 5, y); y += 7 }
+    if (duration) { doc.text(`Duration: ${duration}`, margin + 5, y); y += 7 }
+    y += 20; doc.setFontSize(9); doc.setFont(undefined, 'italic'); doc.text('Generated by SummAID', margin, y)
+    const pdfBlob = doc.output('blob'); const blobUrl = URL.createObjectURL(pdfBlob); const w = window.open(blobUrl, '_blank')
+    if (w) { w.onload = () => setTimeout(() => w.print(), 250) } else { doc.save(`prescription_patient_${patientId}_${Date.now()}.pdf`) }
+  }
+
   return (
-    <div className="h-full flex flex-col bg-slate-50 dark:bg-slate-900 border-r border-slate-200 dark:border-slate-700">
-      {/* Sidebar Header */}
-      <div className="px-4 py-3 border-b border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800">
-        <h3 className="text-sm font-bold text-slate-800 dark:text-slate-100">Tools</h3>
-      </div>
-      
-      {/* Tabs */}
-      <div className="flex border-b border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800">
-        <button
-          onClick={() => setActiveTab('chat')}
-          className={cn(
-            'flex-1 flex items-center justify-center gap-2 px-4 py-2.5 text-xs font-semibold transition-all',
-            activeTab === 'chat'
-              ? 'text-blue-600 dark:text-blue-400 border-b-2 border-blue-600 dark:border-blue-400'
-              : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
-          )}
-        >
-          <MessageSquare className="h-4 w-4" />
-          Chat
-        </button>
-        {userRole === 'DOCTOR' && (
-          <button
-            onClick={() => setActiveTab('rx')}
+    <div className="h-full flex bg-gradient-to-br from-slate-50 via-blue-50 to-purple-50 dark:bg-slate-900">
+      {/* Vertical Sidebar */}
+      <div className="w-64 bg-gradient-to-br from-white via-slate-50 to-blue-50 dark:bg-slate-950 flex flex-col border-r border-slate-200 dark:border-slate-700 shadow-xl">
+        <div className="px-4 py-4 border-b border-slate-200 dark:border-slate-700 bg-white/50 backdrop-blur-sm">
+          <h3 className="text-sm font-bold text-slate-800 dark:text-slate-100 uppercase tracking-wider">Tools</h3>
+        </div>
+
+        <div className="flex flex-col p-3 gap-2">
+          <button 
+            onClick={() => setActiveTab('summary')} 
             className={cn(
-              'flex-1 flex items-center justify-center gap-2 px-4 py-2.5 text-xs font-semibold transition-all',
-              activeTab === 'rx'
-                ? 'text-blue-600 dark:text-blue-400 border-b-2 border-blue-600 dark:border-blue-400'
-                : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
+              'w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-semibold transition-all',
+              activeTab === 'summary' 
+                ? 'bg-gradient-to-r from-blue-500 to-blue-600 text-white shadow-lg shadow-blue-500/30' 
+                : 'bg-white dark:bg-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-600 border border-slate-200 dark:border-slate-600'
             )}
           >
-            <Pill className="h-4 w-4" />
-            Rx
+            <FileText className="h-5 w-5"/> 
+            SUMMARY
           </button>
-        )}
+
+          <button 
+            onClick={() => setActiveTab('chat')} 
+            className={cn(
+              'w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-semibold transition-all',
+              activeTab === 'chat' 
+                ? 'bg-gradient-to-r from-blue-500 to-blue-600 text-white shadow-lg shadow-blue-500/30' 
+                : 'bg-white dark:bg-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-600 border border-slate-200 dark:border-slate-600'
+            )}
+          >
+            <MessageSquare className="h-5 w-5"/> 
+            CHATBOT
+          </button>
+
+          {userRole === 'DOCTOR' && (
+            <button 
+              onClick={() => setActiveTab('rx')} 
+              className={cn(
+                'w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-semibold transition-all',
+                activeTab === 'rx' 
+                  ? 'bg-gradient-to-r from-blue-500 to-blue-600 text-white shadow-lg shadow-blue-500/30' 
+                  : 'bg-white dark:bg-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-600 border border-slate-200 dark:border-slate-600'
+              )}
+            >
+              <Pill className="h-5 w-5"/> 
+              RX
+            </button>
+          )}
+        </div>
       </div>
 
-      {/* Tab Content */}
-      <div className="flex-1 flex flex-col overflow-hidden">
+      {/* Main Content Area */}
+      <div className="flex-1 flex flex-col overflow-hidden bg-white dark:bg-slate-900">
+        {activeTab === 'summary' && (
+          <div className="flex-1 overflow-auto">
+            <SummaryPanel patientId={patientId} />
+          </div>
+        )}
+
         {activeTab === 'chat' && (
           <div className="flex-1 flex flex-col overflow-hidden">
-            {/* Messages */}
             <div className="flex-1 overflow-auto p-4 space-y-3">
-              {!patientId && (
-                <div className="text-center p-6 text-sm text-slate-500 dark:text-slate-400">
-                  Select a patient to start chatting
+              {!patientId ? (
+                <div className="text-center p-12 text-slate-500 dark:text-slate-400">
+                  <MessageSquare className="h-20 w-20 mx-auto mb-6 opacity-30" />
+                  <p className="text-xl font-semibold mb-2">Select a patient to start chatting</p>
                 </div>
-              )}
-              {messages.map((msg, idx) => (
-                <div key={idx} className={cn(
-                  'p-3 rounded-lg text-sm',
-                  msg.role === 'user'
-                    ? 'bg-blue-500 text-white ml-8'
-                    : msg.isError
-                    ? 'bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-300 mr-8'
-                    : 'bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-200 mr-8 border border-slate-200 dark:border-slate-700'
-                )}>
-                  <p className="whitespace-pre-wrap">{msg.content}</p>
-                  {msg.citations && msg.citations.length > 0 && (
-                    renderCitations(msg.citations)
-                  )}
+              ) : messages.length === 0 ? (
+                <div className="text-center py-12 px-6">
+                  <div className="max-w-2xl mx-auto">
+                    <div className="bg-gradient-to-br from-blue-500 to-purple-600 rounded-full w-20 h-20 flex items-center justify-center mx-auto mb-6 shadow-xl">
+                      <MessageSquare className="h-10 w-10 text-white" />
+                    </div>
+                    <h2 className="text-2xl font-bold text-slate-800 dark:text-slate-100 mb-3">Ask About Patient</h2>
+                    <p className="text-slate-600 dark:text-slate-400 mb-8">Get instant answers from the patient's medical records, lab results, and clinical notes.</p>
+                    
+                    <div className="grid gap-3 text-left">
+                      <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-4 hover:shadow-md transition-shadow cursor-pointer" onClick={() => setChatInput("What are the patient's current medications?")}>
+                        <p className="text-sm font-semibold text-blue-600 dark:text-blue-400 mb-1">💊 Current Medications</p>
+                        <p className="text-xs text-slate-600 dark:text-slate-400">"What are the patient's current medications?"</p>
+                      </div>
+                      <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-4 hover:shadow-md transition-shadow cursor-pointer" onClick={() => setChatInput("What are the latest lab results?")}>
+                        <p className="text-sm font-semibold text-green-600 dark:text-green-400 mb-1">🧪 Lab Results</p>
+                        <p className="text-xs text-slate-600 dark:text-slate-400">"What are the latest lab results?"</p>
+                      </div>
+                      <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-4 hover:shadow-md transition-shadow cursor-pointer" onClick={() => setChatInput("Does the patient have any allergies?")}>
+                        <p className="text-sm font-semibold text-red-600 dark:text-red-400 mb-1">⚠️ Allergies</p>
+                        <p className="text-xs text-slate-600 dark:text-slate-400">"Does the patient have any allergies?"</p>
+                      </div>
+                      <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-4 hover:shadow-md transition-shadow cursor-pointer" onClick={() => setChatInput("What is the diagnosis and treatment plan?")}>
+                        <p className="text-sm font-semibold text-purple-600 dark:text-purple-400 mb-1">🩺 Diagnosis & Plan</p>
+                        <p className="text-xs text-slate-600 dark:text-slate-400">"What is the diagnosis and treatment plan?"</p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ) : null}
+              
+              {messages.map((m,i)=> (
+                <div key={i} className={cn('w-full my-2 flex', m.role==='user' ? 'justify-end pr-8' : 'justify-start pl-8')}>
+                  <div
+                    className={cn(
+                      'p-3 rounded-lg text-sm max-w-[75%] break-words',
+                      m.role === 'user'
+                        ? 'bg-blue-500 text-white'
+                        : m.isError
+                        ? 'bg-red-50 text-red-700 border border-red-200'
+                        : 'bg-white dark:bg-slate-800 border'
+                    )}
+                  >
+                    <p className="whitespace-pre-wrap">{m.content}</p>
+                    {m.citations && m.citations.length>0 && renderCitations(m.citations)}
+                  </div>
                 </div>
               ))}
+
               {chatLoading && (
-                <div className="flex items-center gap-2 p-3 bg-slate-100 dark:bg-slate-800 rounded-lg text-sm text-slate-600 dark:text-slate-400">
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  <span>Thinking...</span>
+                <div className="w-full my-2 flex justify-start pl-8">
+                  <div className="p-3 rounded-lg text-sm bg-white dark:bg-slate-800 border flex items-center gap-3 max-w-[50%]">
+                    <div className="flex items-center gap-1">
+                      <span className="inline-block w-2.5 h-2.5 bg-slate-400 rounded-full animate-bounce" style={{ animationDelay: '0s' }} />
+                      <span className="inline-block w-2.5 h-2.5 bg-slate-400 rounded-full animate-bounce" style={{ animationDelay: '0.12s' }} />
+                      <span className="inline-block w-2.5 h-2.5 bg-slate-400 rounded-full animate-bounce" style={{ animationDelay: '0.24s' }} />
+                    </div>
+                    <span className="text-xs text-slate-500">Thinking...</span>
+                  </div>
                 </div>
               )}
-              {chatError && (
-                <div className="p-3 bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-300 rounded-lg text-xs flex items-start gap-2">
-                  <AlertTriangle className="h-4 w-4 flex-shrink-0 mt-0.5" />
-                  <span>{chatError}</span>
-                </div>
-              )}
-              {/* Scroll anchor */}
               <div ref={messagesEndRef} />
             </div>
-            
-            {/* Input */}
-            <div className="p-4 border-t border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800">
-              {speechError && (
-                <div className="mb-2 p-2 bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-300 text-xs rounded">
-                  {speechError}
-                </div>
-              )}
+
+            <div className="p-4 border-t bg-white dark:bg-slate-800">
+              {speechError && <div className="mb-2 p-2 bg-red-50 text-red-700 text-xs rounded">{speechError}</div>}
               <div className="flex gap-2">
-                <input
-                  type="text"
-                  value={chatInput}
-                  onChange={(e) => setChatInput(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === 'Enter' && !chatLoading) handleSendMessage() }}
-                  placeholder="Ask about patient..."
-                  disabled={!patientId || chatLoading}
-                  className="flex-1 px-3 py-2 text-sm rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-700 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-400 disabled:opacity-50"
-                />
-                <button
-                  onMouseDown={startListening}
-                  onMouseUp={stopListening}
-                  onMouseLeave={stopListening}
-                  onTouchStart={startListening}
-                  onTouchEnd={stopListening}
-                  onContextMenu={(e) => e.preventDefault()}
-                  disabled={!patientId || chatLoading || !isSupported}
-                  className={cn(
-                    "px-3 py-2 rounded-lg transition-all",
-                    isListening
-                      ? "bg-red-500 text-white animate-pulse"
-                      : "bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-300 dark:hover:bg-slate-600",
-                    (!patientId || chatLoading || !isSupported) && "opacity-50 cursor-not-allowed"
-                  )}
-                  title={isSupported ? "Hold to record voice" : "Voice input not supported"}
-                >
-                  <Mic className="h-4 w-4" />
-                </button>
-                <button
-                  onClick={handleSendMessage}
-                  disabled={!patientId || !chatInput.trim() || chatLoading}
-                  className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
-                >
-                  <Send className="h-4 w-4" />
-                </button>
+                <input type="text" value={chatInput} onChange={(e)=>setChatInput(e.target.value)} onKeyDown={(e)=>{ if (e.key==='Enter' && !chatLoading) handleSendMessage() }} placeholder="Ask about patient..." disabled={!patientId || chatLoading} className="flex-1 px-3 py-2 rounded-lg border bg-white dark:bg-slate-700" />
+                <button onMouseDown={startListening} onMouseUp={stopListening} onMouseLeave={stopListening} onTouchStart={startListening} onTouchEnd={stopListening} disabled={!patientId || chatLoading || !isSupported} className={cn('px-3 py-2 rounded-lg', isListening ? 'bg-red-500 text-white' : 'bg-slate-200') } title={isSupported ? 'Hold to record' : 'Not supported'}><Mic className="h-4 w-4"/></button>
+                <button onClick={handleSendMessage} disabled={!patientId || !chatInput.trim() || chatLoading} className="px-4 py-2 bg-blue-500 text-white rounded-lg"><Send className="h-4 w-4"/></button>
               </div>
-              {isListening && (
-                <div className="mt-2 text-xs text-red-600 dark:text-red-400 flex items-center gap-1">
-                  <span className="inline-block w-2 h-2 bg-red-500 rounded-full animate-pulse"></span>
-                  Recording... Release to stop
-                </div>
-              )}
             </div>
           </div>
         )}
 
         {activeTab === 'rx' && userRole === 'DOCTOR' && (
-          <div className="flex-1 overflow-auto p-4 space-y-4">
+          <div className="flex-1 overflow-auto p-6">
             {!patientId ? (
-              <div className="text-center p-6 text-sm text-slate-500 dark:text-slate-400">
-                Select a patient to create prescription
+              <div className="text-center p-12 text-slate-500 dark:text-slate-400">
+                <Pill className="h-16 w-16 mx-auto mb-4 opacity-50" />
+                <p className="text-lg">Select a patient to create prescription</p>
               </div>
             ) : (
-              <>
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">Drug Name *</label>
-                  <input
-                    type="text"
-                    value={drugName}
-                    onChange={(e) => setDrugName(e.target.value)}
-                    placeholder="e.g., Amoxicillin"
-                    className="w-full px-3 py-2 text-sm rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-700 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-400"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">Dosage</label>
-                  <input
-                    type="text"
-                    value={dosage}
-                    onChange={(e) => setDosage(e.target.value)}
-                    placeholder="e.g., 500mg"
-                    className="w-full px-3 py-2 text-sm rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-700 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-400"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">Frequency</label>
-                  <input
-                    type="text"
-                    value={frequency}
-                    onChange={(e) => setFrequency(e.target.value)}
-                    placeholder="e.g., 3x daily"
-                    className="w-full px-3 py-2 text-sm rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-700 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-400"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">Duration</label>
-                  <input
-                    type="text"
-                    value={duration}
-                    onChange={(e) => setDuration(e.target.value)}
-                    placeholder="e.g., 7 days"
-                    className="w-full px-3 py-2 text-sm rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-700 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-400"
-                  />
-                </div>
+              <div className="max-w-2xl mx-auto space-y-4">
+                <h2 className="text-2xl font-bold text-slate-800 dark:text-slate-100 mb-6">Digital Prescription</h2>
                 
-                <button
-                  onClick={handleSafetyCheck}
-                  disabled={!drugName.trim() || safetyCheckLoading}
-                  className="w-full py-2.5 px-4 bg-blue-500 text-white text-sm font-semibold rounded-lg hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center justify-center gap-2"
-                >
-                  {safetyCheckLoading ? (
-                    <>
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                      Checking Safety...
-                    </>
-                  ) : (
-                    <>
-                      <AlertTriangle className="h-4 w-4" />
-                      Safety Check
-                    </>
-                  )}
+                <div><label className="block text-sm font-semibold mb-2 text-slate-700 dark:text-slate-300">Drug Name *</label><input className="w-full px-4 py-3 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100" value={drugName} onChange={(e)=>setDrugName(e.target.value)} placeholder="e.g., Amoxicillin"/></div>
+                <div><label className="block text-sm font-semibold mb-2 text-slate-700 dark:text-slate-300">Dosage</label><input className="w-full px-4 py-3 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100" value={dosage} onChange={(e)=>setDosage(e.target.value)} placeholder="e.g., 500mg"/></div>
+                <div><label className="block text-sm font-semibold mb-2 text-slate-700 dark:text-slate-300">Frequency</label><input className="w-full px-4 py-3 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100" value={frequency} onChange={(e)=>setFrequency(e.target.value)} placeholder="e.g., 3x daily"/></div>
+                <div><label className="block text-sm font-semibold mb-2 text-slate-700 dark:text-slate-300">Duration</label><input className="w-full px-4 py-3 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100" value={duration} onChange={(e)=>setDuration(e.target.value)} placeholder="e.g., 7 days"/></div>
+
+                <button onClick={handleSafetyCheck} disabled={!drugName.trim() || safetyCheckLoading} className="w-full py-3 bg-blue-500 text-white rounded-lg font-semibold hover:bg-blue-600 disabled:opacity-50 flex items-center justify-center gap-2">
+                  {safetyCheckLoading ? <><Loader2 className="h-5 w-5 animate-spin"/> Checking Safety...</> : <><AlertTriangle className="h-5 w-5"/> Safety Check</>}
                 </button>
 
-                {/* Success banner when safe */}
                 {safetyCheckDone && !safetyWarning && (
-                  <div className="p-4 rounded-lg border bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800">
-                    <div className="flex items-start gap-2">
-                      <CheckCircle2 className="h-5 w-5 text-green-600 dark:text-green-400 flex-shrink-0 mt-0.5" />
-                      <div>
-                        <p className="text-sm font-semibold text-green-800 dark:text-green-200 mb-1">✅ Safe</p>
-                        <p className="text-xs text-green-700 dark:text-green-300">No documented allergies found for this drug.</p>
-                      </div>
-                    </div>
-                  </div>
+                  <div className="p-4 rounded-lg border-2 border-green-500 bg-green-50 dark:bg-green-900/20"><div className="flex items-start gap-3"><CheckCircle2 className="h-6 w-6 text-green-600 dark:text-green-400"/><div><p className="text-base font-semibold text-green-800 dark:text-green-200">✅ Safe to Prescribe</p><p className="text-sm text-green-700 dark:text-green-300">No documented allergies found for this drug.</p></div></div></div>
                 )}
-                
-                {/* Allergy warnings */}
+
                 {safetyWarning && safetyWarning.hasAllergy && (
-                  <div className="p-4 rounded-lg border bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800">
-                    <div className="flex items-start gap-2">
-                      <AlertTriangle className="h-5 w-5 text-red-600 dark:text-red-400 flex-shrink-0 mt-0.5" />
-                      <div>
-                        <p className="text-sm font-semibold text-red-800 dark:text-red-200 mb-1">⚠️ Allergy Alert</p>
-                        <p className="text-xs text-red-700 dark:text-red-300 mb-2">{safetyWarning.allergyDetails}</p>
-                        {safetyWarning.warnings && safetyWarning.warnings.length > 0 && (
-                          <ul className="space-y-1">
-                            {safetyWarning.warnings.map((w, i) => (
-                              <li key={i} className="text-xs text-red-600 dark:text-red-400">• {w}</li>
-                            ))}
-                          </ul>
-                        )}
-                      </div>
-                    </div>
-                  </div>
+                  <div className="p-4 rounded-lg border-2 border-red-500 bg-red-50 dark:bg-red-900/20"><div className="flex items-start gap-3"><AlertTriangle className="h-6 w-6 text-red-600 dark:text-red-400"/><div><p className="text-base font-semibold text-red-800 dark:text-red-200">⚠️ Allergy Alert</p><p className="text-sm text-red-700 dark:text-red-300 mb-2">{safetyWarning.allergyDetails}</p>{safetyWarning.warnings && safetyWarning.warnings.length > 0 && <ul className="space-y-1 text-sm">{safetyWarning.warnings.map((w,i)=><li key={i} className="text-red-600 dark:text-red-400">• {w}</li>)}</ul>}</div></div></div>
                 )}
-                
-                {/* General warnings (no specific allergy) */}
+
                 {safetyWarning && !safetyWarning.hasAllergy && safetyWarning.warnings && safetyWarning.warnings.length > 0 && (
-                  <div className="p-4 rounded-lg border bg-yellow-50 dark:bg-yellow-900/20 border-yellow-200 dark:border-yellow-800">
-                    <div className="flex items-start gap-2">
-                      <AlertTriangle className="h-5 w-5 text-yellow-600 dark:text-yellow-400 flex-shrink-0 mt-0.5" />
-                      <div>
-                        <p className="text-sm font-semibold text-yellow-800 dark:text-yellow-200 mb-1">⚠️ Warnings</p>
-                        <ul className="space-y-1">
-                          {safetyWarning.warnings.map((w, i) => (
-                            <li key={i} className="text-xs text-yellow-700 dark:text-yellow-300">• {w}</li>
-                          ))}
-                        </ul>
-                      </div>
-                    </div>
-                  </div>
+                  <div className="p-4 rounded-lg border-2 border-yellow-500 bg-yellow-50 dark:bg-yellow-900/20"><div className="flex items-start gap-3"><AlertTriangle className="h-6 w-6 text-yellow-600 dark:text-yellow-400"/><div><p className="text-base font-semibold text-yellow-800 dark:text-yellow-200">⚠️ Warnings</p><ul className="space-y-1 text-sm">{safetyWarning.warnings.map((w,i)=><li key={i} className="text-yellow-700 dark:text-yellow-300">• {w}</li>)}</ul></div></div></div>
                 )}
-                
-                {/* Print Prescription button */}
-                <button
-                  onClick={handlePrintPrescription}
-                  disabled={!drugName.trim() || !safetyCheckDone}
-                  className={cn(
-                    "w-full py-2.5 px-4 text-sm font-semibold rounded-lg transition-all flex items-center justify-center gap-2",
-                    !drugName.trim() || !safetyCheckDone
-                      ? "bg-slate-300 dark:bg-slate-700 text-slate-500 cursor-not-allowed"
-                      : "bg-green-500 text-white hover:bg-green-600"
-                  )}
-                >
-                  <Printer className="h-4 w-4" />
-                  {safetyCheckDone ? 'Print Prescription' : 'Run Safety Check First'}
-                </button>
-              </>
+
+                <button onClick={handlePrintPrescription} disabled={!drugName.trim() || !safetyCheckDone} className={cn('w-full py-3 rounded-lg font-semibold flex items-center justify-center gap-2', !drugName.trim() || !safetyCheckDone ? 'bg-slate-300 dark:bg-slate-700 text-slate-500 cursor-not-allowed' : 'bg-green-500 text-white hover:bg-green-600') }><Printer className="h-5 w-5"/>{safetyCheckDone ? 'Print Prescription' : 'Run Safety Check First'}</button>
+              </div>
             )}
           </div>
         )}

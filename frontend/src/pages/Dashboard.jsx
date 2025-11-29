@@ -36,36 +36,29 @@ export default function Dashboard() {
       {/* Sticky Patient Header */}
       <PatientHeader patientId={selectedPatientId} onSelectPatient={handleSelectPatient} />
       
-      {/* Below header: conditional layout based on role */}
-      <div className={cn(
-        "flex-1 gap-0 overflow-hidden",
-        localStorage.getItem('user_role') === 'DOCTOR' 
-          ? "grid grid-cols-[280px_minmax(0,1fr)]" 
-          : "flex"
-      )}>
-        {/* Left Tools Sidebar - DOCTOR only */}
-        {localStorage.getItem('user_role') === 'DOCTOR' && (
-          <ToolsSidebar patientId={selectedPatientId} summary={null} citations={[]} />
-        )}
-        
-        {/* Center Main Content - Summary for DOCTOR, Chart Prep for MA */}
-        <div className="w-full h-full overflow-auto">
-          {selectedPatientId ? (
-            <SummaryPanel patientId={selectedPatientId} />
-          ) : (
-            <div className="flex items-center justify-center h-full bg-white dark:bg-slate-800">
-              <div className="text-center p-12">
-                <div className="inline-flex p-6 bg-gradient-to-br from-blue-500 to-purple-600 rounded-full shadow-2xl mb-6">
-                  <svg className="w-16 h-16 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                  </svg>
+      {/* Below header: full-width ToolsSidebar for DOCTOR */}
+      <div className="flex-1 overflow-hidden">
+        {localStorage.getItem('user_role') === 'DOCTOR' ? (
+          <ToolsSidebar patientId={selectedPatientId} />
+        ) : (
+          <div className="w-full h-full overflow-auto">
+            {selectedPatientId ? (
+              <SummaryPanel patientId={selectedPatientId} />
+            ) : (
+              <div className="flex items-center justify-center h-full bg-white dark:bg-slate-800">
+                <div className="text-center p-12">
+                  <div className="inline-flex p-6 bg-gradient-to-br from-blue-500 to-purple-600 rounded-full shadow-2xl mb-6">
+                    <svg className="w-16 h-16 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                    </svg>
+                  </div>
+                  <p className="text-xl font-semibold text-slate-700 dark:text-slate-300 mb-2">No Patient Selected</p>
+                  <p className="text-sm text-slate-500 dark:text-slate-400">Select a patient from the header dropdown to view their clinical summary</p>
                 </div>
-                <p className="text-xl font-semibold text-slate-700 dark:text-slate-300 mb-2">No Patient Selected</p>
-                <p className="text-sm text-slate-500 dark:text-slate-400">Select a patient from the header dropdown to view their clinical summary</p>
               </div>
-            </div>
-          )}
-        </div>
+            )}
+          </div>
+        )}
       </div>
     </div>
   )
