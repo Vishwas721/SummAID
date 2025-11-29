@@ -8,6 +8,7 @@ import jsPDF from 'jspdf'
 import { Document, Page, pdfjs } from 'react-pdf'
 import 'react-pdf/dist/Page/AnnotationLayer.css'
 import 'react-pdf/dist/Page/TextLayer.css'
+import { MedicalChartsPanel } from './MedicalChart'
 
 // Configure PDF.js worker
 pdfjs.GlobalWorkerOptions.workerSrc = new URL(
@@ -420,6 +421,9 @@ export function SummaryPanel({ patientId }) {
             >
               {summary}
             </ReactMarkdown>
+            
+            {/* Medical Charts - automatically parse and display charts from tables */}
+            <MedicalChartsPanel summaryText={summary} />
           </div>
         )}
 
