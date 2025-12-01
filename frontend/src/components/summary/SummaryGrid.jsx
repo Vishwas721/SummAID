@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import axios from 'axios'
-import { Loader2, AlertTriangle } from 'lucide-react'
+import { Loader2, AlertTriangle, ChevronDown, ChevronUp, History } from 'lucide-react'
 import { PatientTimeline } from './PatientTimeline'
 import { EvolutionCard } from './EvolutionCard'
 import { ActionPlanCard } from './ActionPlanCard'
@@ -23,6 +23,7 @@ export function SummaryGrid({ patientId }) {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
   const [userRole] = useState(localStorage.getItem('user_role') || 'DOCTOR')
+  const [timelineExpanded, setTimelineExpanded] = useState(false)
 
   useEffect(() => {
     if (patientId && userRole === 'DOCTOR') {
@@ -141,11 +142,6 @@ export function SummaryGrid({ patientId }) {
           </p>
         </div>
 
-        {/* Patient Journey Timeline */}
-        {reports.length > 0 && (
-          <PatientTimeline reports={reports} className="mb-6" />
-        )}
-
         {/* Card Grid */}
         <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
           {/* Evolution Card - Always present */}
@@ -186,6 +182,49 @@ export function SummaryGrid({ patientId }) {
             />
           )}
         </div>
+
+        {/* Collapsible Patient Journey Timeline - Bottom Section */}
+        {reports.length > 0 && (
+          <div className="mt-8">
+            <button
+              onClick={() => setTimelineExpanded(!timelineExpanded)}
+              className="w-full group flex items-center justify-between p-4 bg-white dark:bg-slate-800 rounded-xl border-2 border-slate-200 dark:border-slate-700 hover:border-indigo-300 dark:hover:border-indigo-600 transition-all shadow-sm hover:shadow-md"
+            >
+              <div className="flex items-center gap-3">
+                <div className="p-2 rounded-lg bg-gradient-to-br from-indigo-500 to-purple-600 text-white">
+                  <History className="h-5 w-5" />
+                </div>
+                <div className="text-left">
+                  <h3 className="text-base font-semibold text-slate-800 dark:text-slate-100">
+                    Clinical Timeline
+                  </h3>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                    {reports.length} report{reports.length !== 1 ? 's' : ''} • View chronological patient journey
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-medium text-slate-600 dark:text-slate-400 group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-colors">
+                  {timelineExpanded ? 'Hide' : 'Show'}
+                </span>
+                {timelineExpanded ? (
+                  <ChevronUp className="h-5 w-5 text-slate-600 dark:text-slate-400 group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-colors" />
+                ) : (
+                  <ChevronDown className="h-5 w-5 text-slate-600 dark:text-slate-400 group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-colors" />
+                )}
+              </div>
+            </button>
+
+            {/* Animated Timeline Container */}
+            <div 
+              className={`overflow-hidden transition-all duration-500 ease-in-out ${
+                timelineExpanded ? 'max-h-[2000px] opacity-100 mt-4' : 'max-h-0 opacity-0'
+              }`}
+            >
+              <PatientTimeline reports={reports} />
+            </div>
+          </div>
+        )}
       </div>
     </div>
   )

@@ -39,6 +39,19 @@
           "default": null,
           "description": "Date of audiogram test",
           "title": "Test Date"
+        },
+        "status": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Hearing status: HIGH (significant loss), NORMAL, or LOW",
+          "title": "Status"
         }
       },
       "title": "Audiogram",
@@ -276,6 +289,22 @@
           "default": null,
           "description": "Response to current treatment (e.g., 'Partial Response', 'Stable Disease')",
           "title": "Treatment Response"
+        },
+        "pertinent_negatives": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Major oncology findings that are absent (e.g., 'No metastasis', 'No lymph node involvement')",
+          "title": "Pertinent Negatives"
         }
       },
       "title": "OncologyData",
@@ -334,6 +363,19 @@
           "description": "Severity classification (e.g., 'Mild', 'Moderate', 'Severe', 'Profound')",
           "title": "Hearing Loss Severity"
         },
+        "hearing_trend": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Hearing trend over time: IMPROVING, WORSENING, or STABLE",
+          "title": "Hearing Trend"
+        },
         "tinnitus": {
           "anyOf": [
             {
@@ -372,6 +414,22 @@
           "default": null,
           "description": "Current amplification device (e.g., 'Hearing Aid', 'Cochlear Implant', 'None')",
           "title": "Amplification"
+        },
+        "pertinent_negatives": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Audiology findings that are absent (e.g., 'No conductive loss', 'No middle ear pathology')",
+          "title": "Pertinent Negatives"
         }
       },
       "title": "SpeechData",
@@ -466,6 +524,19 @@
           "default": null,
           "description": "Anatomical location if multiple tumors",
           "title": "Location"
+        },
+        "status": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Trend status: IMPROVING, WORSENING, or STABLE",
+          "title": "Status"
         }
       },
       "required": [

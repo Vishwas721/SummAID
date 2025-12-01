@@ -15,6 +15,120 @@ from routers.patient_router import router as patient_router
 from schemas import AIResponseSchema, UniversalData, OncologyData, SpeechData
 from parallel_prompts import _generate_structured_summary_parallel
 
+# =============================================================================
+# DATABASE UTILITIES
+# =============================================================================
+
+def get_all_chunks_for_patient(patient_id: int) -> List[str]:
+    """
+    Retrieve all decrypted text chunks for a given patient from PostgreSQL.
+    
+    Args:
+        patient_id: The patient ID to retrieve chunks for
+        
+    Returns:
+        List of decrypted chunk text strings
+        
+    Raises:
+        HTTPException: If patient not found or database error occurs
+    """
+    conn = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        
+        # Get all report IDs for this patient
+        cur.execute("SELECT report_id FROM reports WHERE patient_id=%s ORDER BY report_id", (patient_id,))
+        report_rows = cur.fetchall()
+        report_ids = [r[0] for r in report_rows]
+        
+        if not report_ids:
+            cur.close()
+            conn.close()
+            raise HTTPException(status_code=404, detail=f"No reports found for patient_id={patient_id}")
+        
+        # Retrieve all chunks for these reports, decrypted
+        placeholders = ','.join(['%s'] * len(report_ids))
+        chunk_sql = f"""
+            SELECT pgp_sym_decrypt(c.chunk_text_encrypted, %s)::text AS chunk_text
+            FROM report_chunks c
+            WHERE c.report_id IN ({placeholders})
+            ORDER BY c.report_id, c.chunk_id
+        """
+        cur.execute(chunk_sql, [ENCRYPTION_KEY, *report_ids])
+        rows = cur.fetchall()
+        
+        chunks = [row[0] for row in rows if row and row[0]]
+        
+        cur.close()
+        conn.close()
+        
+        if not chunks:
+            raise HTTPException(status_code=404, detail=f"No text chunks found for patient_id={patient_id}")
+        
+        return chunks
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        if conn:
+            conn.close()
+        logger.exception(f"Error retrieving chunks for patient {patient_id}")
+        raise HTTPException(status_code=500, detail=f"Database error: {e}")
+
+
+async def generate_parallel_summary(full_context: str, patient_label: str = "Patient", patient_type: str = "general") -> Dict[str, Any]:
+    """
+    Generate a structured medical summary using parallel prompt extraction.
+    
+    This is a wrapper around _generate_structured_summary_parallel that:
+    - Takes a single context string and splits it appropriately
+    - Returns a parsed Python dict instead of JSON string
+    - Matches the expected SummaryResponse schema
+    
+    Args:
+        full_context: Concatenated medical report text
+        patient_label: Patient identifier for logging
+        patient_type: Type hint (oncology, speech, general)
+        
+    Returns:
+        Dictionary with keys: evolution, labs, key_findings, recommendations
+    """
+    # Split context into reasonable chunks (if very large)
+    MAX_CHUNK_SIZE = 8000
+    if len(full_context) > MAX_CHUNK_SIZE:
+        # Split into overlapping chunks
+        chunks = []
+        step = MAX_CHUNK_SIZE // 2
+        for i in range(0, len(full_context), step):
+            chunk = full_context[i:i+MAX_CHUNK_SIZE]
+            if chunk.strip():
+                chunks.append(chunk)
+    else:
+        chunks = [full_context]
+    
+    # Call parallel extraction system
+    summary_json = await _generate_structured_summary_parallel(
+        context_chunks=chunks,
+        patient_label=patient_label,
+        patient_type_hint=patient_type,
+        model=None  # Uses DEFAULT_MODEL from environment
+    )
+    
+    # Parse JSON response
+    summary_dict = json.loads(summary_json)
+    
+    # Extract the 4 keys expected by SummaryResponse
+    # Map from AIResponseSchema structure to legacy 4-key format
+    universal = summary_dict.get('universal', {})
+    
+    return {
+        "evolution": universal.get('evolution', 'No evolution data available'),
+        "labs": universal.get('current_status', []),  # Map current_status to labs
+        "key_findings": universal.get('current_status', []),  # Duplicate for compatibility
+        "recommendations": universal.get('plan', [])
+    }
+
 # Configure logging
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -372,6 +486,14 @@ class SaveSummaryRequest(BaseModel):
     patient_id: int = Field(..., description="Patient ID to save summary for")
     summary_text: str = Field(..., description="Edited summary text to persist as official version")
 
+
+class SummaryResponse(BaseModel):
+    """Response model for /summarize endpoint matching the 4 keys from generate_parallel_summary"""
+    evolution: str = Field(..., description="Clinical evolution narrative")
+    labs: List[str] = Field(default_factory=list, description="Lab values and current status")
+    key_findings: List[str] = Field(default_factory=list, description="Key clinical findings")
+    recommendations: List[str] = Field(default_factory=list, description="Treatment plan and recommendations")
+
 def _embed_text(text: str) -> List[float]:
     """Call local Ollama embed endpoint and return embedding (list of floats)."""
     try:
@@ -613,188 +735,84 @@ def _normalize_text(s: str) -> str:
     s = '\n'.join(' '.join(line.split()) for line in s.split('\n'))
     return s.strip()
 
-@app.post("/summarize/{patient_id}")
+@app.post("/summarize/{patient_id}", response_model=SummaryResponse)
 async def summarize_patient(
     request: Request,
     patient_id: int = Path(..., description="The numeric patient_id to summarize"),
     payload: SummarizeRequest = Body(default=SummarizeRequest())
 ):
-    """Summarize using patient_id (canonical endpoint) across all of the patient's reports.
+    """Summarize using patient_id with full RAG logic.
 
-    Steps:
-    - Resolve patient's display name (for labeling/prompt only)
-    - Find all report_ids for this patient
-    - Hybrid search (vector + optional keywords) only within those report_ids
-    - Decrypt best chunks and generate summary via Ollama
-    - Return summary + citations (unchanged shape)
+    Implementation:
+    1. Retrieve all text chunks from PostgreSQL using get_all_chunks_for_patient()
+    2. Check if chunks is empty; raise 404 if no data
+    3. Concatenate chunks into single full_context string
+    4. Pass full_context to generate_parallel_summary()
+    5. Return structured response with evolution, labs, key_findings, recommendations
     """
     try:
         # Guard: only Medical Assistant role may generate summaries
         role = request.headers.get('X-User-Role') or request.headers.get('x-user-role') or ''
         if role.upper() == 'DOCTOR':
             raise HTTPException(status_code=403, detail="Doctors cannot generate summaries; use /summary/{patient_id}")
-        # 1. Resolve display label & fetch report_ids
-        conn = get_db_connection(); cur = conn.cursor()
+        
+        # 1. Resolve patient display name for labeling
+        conn = get_db_connection()
+        cur = conn.cursor()
         cur.execute("SELECT patient_display_name, patient_demo_id FROM patients WHERE patient_id=%s", (patient_id,))
         prow = cur.fetchone()
         if not prow:
-            cur.close(); conn.close()
+            cur.close()
+            conn.close()
             raise HTTPException(status_code=404, detail=f"Patient {patient_id} not found")
         display_name, patient_demo_id = prow[0], prow[1]
         label = display_name or patient_demo_id or str(patient_id)
-
-        cur.execute("SELECT report_id, report_type FROM reports WHERE patient_id=%s ORDER BY report_id", (patient_id,))
-        report_rows = cur.fetchall()
-        report_ids = [r[0] for r in report_rows]
-        report_types = [r[1] for r in report_rows]
-        if not report_ids:
-            cur.close(); conn.close()
-            raise HTTPException(status_code=404, detail=f"No reports found for patient_id={patient_id}")
-
-        # Determine patient type for prompt selection
+        
+        # Determine patient type from report_types
+        cur.execute("SELECT report_type FROM reports WHERE patient_id=%s", (patient_id,))
+        report_types = [r[0] for r in cur.fetchall()]
         patient_type = _infer_patient_type(report_types)
-        system_prompt = SPEECH_PROMPT if patient_type == "speech" else STANDARD_PROMPT
-        logger.debug(f"Summarize patient_id={patient_id} type={patient_type} using prompt='{system_prompt[:60]}...'")
-
-        # 2. Build embedding basis - use clinically-focused query for better retrieval
-        if payload.keywords:
-            embed_basis = " ".join(payload.keywords)
-        else:
-            # Clinically-focused query to boost FINDINGS/IMPRESSION sections, with optional chief complaint focus
-            if payload.chief_complaint and payload.chief_complaint.strip():
-                cc = payload.chief_complaint.strip()
-                embed_basis = f"clinical findings diagnosis impression abnormalities related to {cc} key findings radiological findings pathology results"
-            else:
-                embed_basis = "clinical findings diagnosis impression key findings radiological findings pathology results"
         
-        query_embedding = _embed_text(embed_basis)
-        if len(query_embedding) != 768:
-            raise HTTPException(status_code=500, detail=f"Embedding dimension {len(query_embedding)} != 768 schema expectation")
-        embedding_literal = '[' + ','.join(f'{x:.6f}' for x in query_embedding) + ']'
-
-        # 3. Retrieval limited to this patient's report_ids
-        similarity_chunks: List[Tuple[int, int, str, dict]] = []
-        keyword_chunks: List[Tuple[int, int, str, dict]] = []
-        structured_chunks: List[Tuple[int, int, str, dict]] = []  # Force-include FINDINGS/IMPRESSION
+        cur.close()
+        conn.close()
         
-        # reuse existing connection/cur
-        placeholders = ','.join(['%s'] * len(report_ids))
+        # 2. Retrieve all chunks from database
+        logger.info(f"Retrieving chunks for patient {patient_id}")
+        chunks = get_all_chunks_for_patient(patient_id)
         
-        # 3a. First, force-include chunks with key structured sections (FINDINGS, IMPRESSION, CONCLUSION)
-        structured_sql = f"""
-            SELECT c.chunk_id,
-                   c.report_id,
-                   pgp_sym_decrypt(c.chunk_text_encrypted, %s)::text AS chunk_text,
-                   c.source_metadata
-            FROM report_chunks c
-            WHERE c.report_id IN ({placeholders})
-            AND (
-                pgp_sym_decrypt(c.chunk_text_encrypted, %s)::text ~* '\\n\\s*FINDINGS\\s*\\n'
-                OR pgp_sym_decrypt(c.chunk_text_encrypted, %s)::text ~* '\\n\\s*IMPRESSION\\s*\\n'
-                OR pgp_sym_decrypt(c.chunk_text_encrypted, %s)::text ~* '\\n\\s*CONCLUSION\\s*\\n'
-            )
-        """
-        cur.execute(structured_sql, [ENCRYPTION_KEY, *report_ids, ENCRYPTION_KEY, ENCRYPTION_KEY, ENCRYPTION_KEY])
-        for row in cur.fetchall():
-            if row and row[2]:
-                structured_chunks.append((row[0], row[1], row[2], row[3]))
+        # 3. Check if empty
+        if not chunks:
+            raise HTTPException(status_code=404, detail=f"No text chunks found for patient_id={patient_id}")
         
-        # 3b. Then get similarity-based chunks
-        similarity_sql = f"""
-            WITH q AS (SELECT %s::vector(768) AS qv)
-            SELECT c.chunk_id,
-                   c.report_id,
-                   pgp_sym_decrypt(c.chunk_text_encrypted, %s)::text AS chunk_text,
-                   c.source_metadata,
-                   (c.report_vector <=> q.qv) AS distance
-            FROM report_chunks c, q
-            WHERE c.report_id IN ({placeholders})
-            ORDER BY c.report_vector <=> q.qv
-            LIMIT %s
-        """
-        cur.execute(
-            similarity_sql,
-            (embedding_literal, ENCRYPTION_KEY, *report_ids, payload.max_chunks)
+        # 4. Concatenate all chunks into single context string
+        full_context = "\n\n".join(chunks)
+        logger.info(f"Context prepared: {len(full_context)} characters from {len(chunks)} chunks")
+        
+        # 5. Generate summary using parallel prompt system
+        logger.info(f"Generating parallel summary for patient {patient_id} ({patient_type})")
+        summary_dict = await generate_parallel_summary(
+            full_context=full_context,
+            patient_label=label,
+            patient_type=patient_type
         )
-        for row in cur.fetchall():
-            if row and row[2]:
-                similarity_chunks.append((row[0], row[1], row[2], row[3]))
-        if payload.keywords:
-            patterns = [f"%{kw}%" for kw in payload.keywords]
-            ors = " OR ".join([f"pgp_sym_decrypt(c.chunk_text_encrypted, %s)::text ILIKE %s" for _ in patterns])
-            params: List[str] = []
-            for ptn in patterns:
-                params.extend([ENCRYPTION_KEY, ptn])
-            kw_sql = f"""
-                SELECT DISTINCT c.chunk_id,
-                       c.report_id,
-                       pgp_sym_decrypt(c.chunk_text_encrypted, %s)::text AS chunk_text,
-                       c.source_metadata
-                FROM report_chunks c
-                WHERE c.report_id IN ({placeholders}) AND ( {ors} )
-            """.replace('%s)::text ILIKE %s', '%s)::text ILIKE %s')
-            final_params = [ENCRYPTION_KEY, *report_ids] + params
-            cur.execute(kw_sql, final_params)
-            for row in cur.fetchall():
-                if row and row[2]:
-                    keyword_chunks.append((row[0], row[1], row[2], row[3]))
-        cur.close(); conn.close()
-
-        # 4. Merge & trim - prioritize structured sections, then keywords, then similarity
-        seen = set(); merged: List[Tuple[int,int,str,dict]] = []
-        # Force structured sections first (FINDINGS/IMPRESSION always included)
-        for cid,rid,txt,meta in structured_chunks:
-            sig = txt[:200]
-            if sig in seen: continue
-            seen.add(sig); merged.append((cid,rid,txt,meta))
-        # Then keyword matches
-        for cid,rid,txt,meta in keyword_chunks:
-            sig = txt[:200]
-            if sig in seen: continue
-            seen.add(sig); merged.append((cid,rid,txt,meta))
-        # Then similarity-based chunks
-        for cid,rid,txt,meta in similarity_chunks:
-            sig = txt[:200]
-            if sig in seen: continue
-            seen.add(sig); merged.append((cid,rid,txt,meta))
-        context_accum: List[Tuple[int,int,str,dict]] = []
-        total_chars = 0
-        for cid,rid,txt,meta in merged:
-            if total_chars + len(txt) > payload.max_context_chars: break
-            context_accum.append((cid,rid,txt,meta)); total_chars += len(txt)
-        if not context_accum:
-            raise HTTPException(status_code=404, detail=f"No chunks found for patient_id={patient_id}")
-
-        # 5. Generate summary using parallel prompt system for structured extraction
-        logger.info(f"Using parallel prompt system for patient {patient_id}")
-        summary_text = await _generate_structured_summary_parallel(
-            [t for _,_,t,_ in context_accum], 
-            label, 
-            patient_type,
-            LLM_MODEL_NAME
-        )
-
-        # 6. Citations
-        citations = []
-        PREVIEW_LEN = 160
-        for cid,rid,txt,meta in context_accum:
-            norm_full = _normalize_text(txt)
-            preview = norm_full[:PREVIEW_LEN] + ("…" if len(norm_full) > PREVIEW_LEN else "")
-            # Ensure report_id is available inside source_metadata for frontend routing
-            enriched_meta = (meta or {}).copy()
-            enriched_meta.setdefault('report_id', rid)
-            citations.append({
-                "source_chunk_id": cid,
-                "report_id": rid,
-                "source_text_preview": preview,
-                "source_full_text": norm_full,
-                "source_metadata": enriched_meta
-            })
-        # Ensure schema support (table/column) before persist
+        
+        # 6. Build response matching SummaryResponse schema (4 keys)
+        response_data = {
+            "evolution": summary_dict.get("evolution", "No evolution data available"),
+            "labs": summary_dict.get("labs", []),
+            "key_findings": summary_dict.get("key_findings", []),
+            "recommendations": summary_dict.get("recommendations", [])
+        }
+        
+        # 7. Persist summary to database
         ensure_summary_support()
-        # 7. Persist summary & mark chart prepared
         try:
-            conn2 = get_db_connection(); cur2 = conn2.cursor()
+            conn2 = get_db_connection()
+            cur2 = conn2.cursor()
+            
+            # Convert to JSON string for storage
+            summary_text = json.dumps(response_data, indent=2)
+            
             # Upsert patient_summaries
             cur2.execute("""
                 INSERT INTO patient_summaries (patient_id, summary_text, patient_type, chief_complaint, citations)
@@ -805,12 +823,21 @@ async def summarize_patient(
                       chief_complaint = EXCLUDED.chief_complaint,
                       citations = EXCLUDED.citations,
                       generated_at = CURRENT_TIMESTAMP
-            """, (patient_id, summary_text, patient_type, payload.chief_complaint, json.dumps(citations)))
+            """, (patient_id, summary_text, patient_type, payload.chief_complaint, json.dumps([])))
+            
+            # Mark chart as prepared
             cur2.execute("UPDATE patients SET chart_prepared_at = CURRENT_TIMESTAMP WHERE patient_id=%s", (patient_id,))
-            conn2.commit(); cur2.close(); conn2.close()
+            
+            conn2.commit()
+            cur2.close()
+            conn2.close()
+            
+            logger.info(f"Summary persisted for patient {patient_id}")
         except Exception as e:
             logger.warning(f"Failed to persist summary for patient {patient_id}: {e}")
-        return {"summary_text": summary_text, "citations": citations}
+        
+        return response_data
+        
     except HTTPException:
         raise
     except Exception as e:

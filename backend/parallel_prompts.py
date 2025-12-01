@@ -1,13 +1,21 @@
 """
-Parallel Prompt System Module
-==============================
+Parallel Prompt System Module (Production-Ready)
+=================================================
 Focused extraction functions for structured AI responses.
-To be integrated into main.py after _infer_patient_type function.
+Includes robust error handling, timeouts, and environment variable configuration.
+
+Features:
+- Environment variable for LLM model selection
+- Timeout protection (60s default)
+- Comprehensive error handling with user-friendly messages
+- Parallel execution for performance
+- Schema validation for data integrity
 """
 
 import asyncio
 import json
 import logging
+import os
 from typing import List, Optional, Dict, Any
 from datetime import datetime
 import requests
@@ -15,11 +23,29 @@ import requests
 logger = logging.getLogger(__name__)
 
 # =============================================================================
+# CONFIGURATION
+# =============================================================================
+
+# Load LLM model from environment variable (default: llama3:8b)
+DEFAULT_MODEL = os.getenv('LLM_MODEL', 'llama3:8b')
+LLM_TIMEOUT = 60  # Timeout for LLM calls in seconds
+
+# =============================================================================
 # PARALLEL PROMPT SYSTEM FOR STRUCTURED EXTRACTION
 # =============================================================================
 
 async def _call_llm_async(prompt: str, model: str, temperature: float = 0.1) -> str:
-    """Async wrapper for LLM calls to enable parallel execution."""
+    """
+    Async wrapper for LLM calls to enable parallel execution.
+    
+    Args:
+        prompt: The prompt to send to the LLM
+        model: Model name (e.g., 'llama3:8b')
+        temperature: Sampling temperature (0.0-1.0)
+        
+    Returns:
+        LLM response text or error message
+    """
     loop = asyncio.get_event_loop()
     
     def _call():
@@ -41,15 +67,28 @@ async def _call_llm_async(prompt: str, model: str, temperature: float = 0.1) -> 
             )
             data = r.json()
             if r.status_code != 200:
-                return f"Error: {json.dumps(data)[:200]}"
+                return f"⚠️ Error: {json.dumps(data)[:200]}"
             return data.get('response', '').strip()
+        except requests.exceptions.Timeout:
+            return "⚠️ Error: LLM request timed out"
+        except requests.exceptions.ConnectionError:
+            return "⚠️ Error: Cannot connect to LLM service"
         except Exception as e:
-            return f"Error: {str(e)}"
+            return f"⚠️ Error: {str(e)}"
     
     return await loop.run_in_executor(None, _call)
 
 async def _classify_specialty(context: str, model: str) -> str:
-    """Step 1: Classify patient specialty (oncology, speech, or general)."""
+    """
+    Step 1: Classify patient specialty (oncology, speech, or general).
+    
+    Args:
+        context: Medical report text
+        model: LLM model name
+        
+    Returns:
+        One of: 'oncology', 'speech', 'general'
+    """
     prompt = f"""Analyze the following medical report excerpts and classify the patient specialty.
 
 RETURN ONLY ONE WORD: oncology, speech, or general
@@ -64,21 +103,48 @@ Medical Reports:
 
 Classification (one word only):"""
     
-    result = await _call_llm_async(prompt, model, temperature=0.0)
-    classification = result.lower().strip()
-    
-    # Validate and default
-    if classification in ['oncology', 'speech', 'general']:
-        return classification
-    elif 'oncology' in classification or 'cancer' in classification:
-        return 'oncology'
-    elif 'speech' in classification or 'audio' in classification:
-        return 'speech'
-    else:
+    try:
+        result = await asyncio.wait_for(
+            _call_llm_async(prompt, model, temperature=0.0),
+            timeout=LLM_TIMEOUT
+        )
+        
+        # Check for error message
+        if result.startswith('⚠️ Error:'):
+            logger.error(f"Specialty classification failed: {result}")
+            return 'general'
+        
+        classification = result.lower().strip()
+        
+        # Validate and default
+        if classification in ['oncology', 'speech', 'general']:
+            return classification
+        elif 'oncology' in classification or 'cancer' in classification:
+            return 'oncology'
+        elif 'speech' in classification or 'audio' in classification:
+            return 'speech'
+        else:
+            return 'general'
+            
+    except asyncio.TimeoutError:
+        logger.error("Specialty classification timed out")
+        return 'general'
+    except Exception as e:
+        logger.error(f"Specialty classification error: {e}")
         return 'general'
 
 async def _extract_evolution(context: str, specialty: str, model: str) -> str:
-    """Step 2a: Extract medical journey narrative."""
+    """
+    Step 2a: Extract medical journey narrative.
+    
+    Args:
+        context: Medical report text
+        specialty: Patient specialty classification
+        model: LLM model name
+        
+    Returns:
+        Narrative text or error message
+    """
     prompt = f"""You are a medical AI. Write a concise 2-3 sentence narrative describing the patient's medical journey from diagnosis to current state.
 
 Focus on:
@@ -92,10 +158,34 @@ Medical Reports:
 
 Narrative (2-3 sentences):"""
     
-    return await _call_llm_async(prompt, model, temperature=0.2)
+    try:
+        result = await asyncio.wait_for(
+            _call_llm_async(prompt, model, temperature=0.2),
+            timeout=LLM_TIMEOUT
+        )
+        
+        if result.startswith('⚠️ Error:'):
+            return f"⚠️ Unable to generate medical narrative. {result}"
+        
+        return result
+        
+    except asyncio.TimeoutError:
+        return "⚠️ Error: Narrative generation timed out."
+    except Exception as e:
+        return f"⚠️ Error: {str(e)}"
 
 async def _extract_current_status(context: str, specialty: str, model: str) -> List[str]:
-    """Step 2b: Extract current status as bullet points."""
+    """
+    Step 2b: Extract current status as bullet points.
+    
+    Args:
+        context: Medical report text
+        specialty: Patient specialty classification
+        model: LLM model name
+        
+    Returns:
+        List of status bullet points or error list
+    """
     prompt = f"""Extract the patient's CURRENT medical status as 3-5 concise bullet points.
 
 Focus on:
@@ -113,22 +203,45 @@ Medical Reports:
 Current Status:
 -"""
     
-    result = await _call_llm_async(prompt, model, temperature=0.1)
-    # Parse bullet points
-    lines = [line.strip() for line in result.split('\n') if line.strip()]
-    bullets = []
-    for line in lines:
-        if line.startswith('-'):
-            bullets.append(line[1:].strip())
-        elif line.startswith('•'):
-            bullets.append(line[1:].strip())
-        elif bullets:  # continuation of previous bullet
-            bullets[-1] += ' ' + line
-    
-    return bullets[:5] if bullets else ["Status information not available"]
+    try:
+        result = await asyncio.wait_for(
+            _call_llm_async(prompt, model, temperature=0.1),
+            timeout=LLM_TIMEOUT
+        )
+        
+        if result.startswith('⚠️ Error:'):
+            return [f"⚠️ Status extraction failed. {result}"]
+        
+        # Parse bullet points
+        lines = [line.strip() for line in result.split('\n') if line.strip()]
+        bullets = []
+        for line in lines:
+            if line.startswith('-'):
+                bullets.append(line[1:].strip())
+            elif line.startswith('•'):
+                bullets.append(line[1:].strip())
+            elif bullets:  # continuation of previous bullet
+                bullets[-1] += ' ' + line
+        
+        return bullets[:5] if bullets else ["Status information not available"]
+        
+    except asyncio.TimeoutError:
+        return ["⚠️ Error: Status extraction timed out."]
+    except Exception as e:
+        return [f"⚠️ Error: {str(e)}"]
 
 async def _extract_plan(context: str, specialty: str, model: str) -> List[str]:
-    """Step 2c: Extract treatment plan and next steps."""
+    """
+    Step 2c: Extract treatment plan and next steps.
+    
+    Args:
+        context: Medical report text
+        specialty: Patient specialty classification
+        model: LLM model name
+        
+    Returns:
+        List of plan bullet points or error list
+    """
     prompt = f"""Extract the treatment PLAN and next steps as 3-5 concise bullet points.
 
 Focus on:
@@ -145,22 +258,44 @@ Medical Reports:
 Plan:
 -"""
     
-    result = await _call_llm_async(prompt, model, temperature=0.1)
-    # Parse bullet points
-    lines = [line.strip() for line in result.split('\n') if line.strip()]
-    bullets = []
-    for line in lines:
-        if line.startswith('-'):
-            bullets.append(line[1:].strip())
-        elif line.startswith('•'):
-            bullets.append(line[1:].strip())
-        elif bullets:
-            bullets[-1] += ' ' + line
-    
-    return bullets[:5] if bullets else ["Plan information not available"]
+    try:
+        result = await asyncio.wait_for(
+            _call_llm_async(prompt, model, temperature=0.1),
+            timeout=LLM_TIMEOUT
+        )
+        
+        if result.startswith('⚠️ Error:'):
+            return [f"⚠️ Plan extraction failed. {result}"]
+        
+        # Parse bullet points
+        lines = [line.strip() for line in result.split('\n') if line.strip()]
+        bullets = []
+        for line in lines:
+            if line.startswith('-'):
+                bullets.append(line[1:].strip())
+            elif line.startswith('•'):
+                bullets.append(line[1:].strip())
+            elif bullets:
+                bullets[-1] += ' ' + line
+        
+        return bullets[:5] if bullets else ["Plan information not available"]
+        
+    except asyncio.TimeoutError:
+        return ["⚠️ Error: Plan extraction timed out."]
+    except Exception as e:
+        return [f"⚠️ Error: {str(e)}"]
 
 async def _extract_oncology_data(context: str, model: str) -> Optional[Dict[str, Any]]:
-    """Step 3a: Extract oncology-specific structured data."""
+    """
+    Step 3a: Extract oncology-specific structured data.
+    
+    Args:
+        context: Medical report text
+        model: LLM model name
+        
+    Returns:
+        Oncology data dict or None if extraction fails
+    """
     prompt = f"""Extract oncology data from the medical reports and return ONLY valid JSON.
 
 Extract:
@@ -196,11 +331,17 @@ Medical Reports:
 
 JSON:"""
     
-    result = await _call_llm_async(prompt, model, temperature=0.0)
-    
-    # Extract JSON from response
     try:
-        # Try to find JSON in the response
+        result = await asyncio.wait_for(
+            _call_llm_async(prompt, model, temperature=0.0),
+            timeout=LLM_TIMEOUT
+        )
+        
+        if result.startswith('⚠️ Error:'):
+            logger.error(f"Oncology data extraction failed: {result}")
+            return None
+        
+        # Extract JSON from response
         start = result.find('{')
         end = result.rfind('}')
         if start >= 0 and end >= 0:
@@ -208,11 +349,28 @@ JSON:"""
             data = json.loads(json_str)
             return data
         return None
-    except:
+        
+    except asyncio.TimeoutError:
+        logger.error("Oncology data extraction timed out")
+        return None
+    except json.JSONDecodeError as e:
+        logger.error(f"Oncology JSON parse error: {e}")
+        return None
+    except Exception as e:
+        logger.error(f"Oncology data extraction error: {e}")
         return None
 
 async def _extract_speech_data(context: str, model: str) -> Optional[Dict[str, Any]]:
-    """Step 3b: Extract speech/audiology structured data."""
+    """
+    Step 3b: Extract speech/audiology structured data.
+    
+    Args:
+        context: Medical report text
+        model: LLM model name
+        
+    Returns:
+        Speech data dict or None if extraction fails
+    """
     prompt = f"""Extract audiology data from the medical reports and return ONLY valid JSON.
 
 Extract:
@@ -258,10 +416,17 @@ Medical Reports:
 
 JSON:"""
     
-    result = await _call_llm_async(prompt, model, temperature=0.0)
-    
-    # Extract JSON from response
     try:
+        result = await asyncio.wait_for(
+            _call_llm_async(prompt, model, temperature=0.0),
+            timeout=LLM_TIMEOUT
+        )
+        
+        if result.startswith('⚠️ Error:'):
+            logger.error(f"Speech data extraction failed: {result}")
+            return None
+        
+        # Extract JSON from response
         start = result.find('{')
         end = result.rfind('}')
         if start >= 0 and end >= 0:
@@ -269,20 +434,46 @@ JSON:"""
             data = json.loads(json_str)
             return data
         return None
-    except:
+        
+    except asyncio.TimeoutError:
+        logger.error("Speech data extraction timed out")
+        return None
+    except json.JSONDecodeError as e:
+        logger.error(f"Speech JSON parse error: {e}")
+        return None
+    except Exception as e:
+        logger.error(f"Speech data extraction error: {e}")
         return None
 
-async def _generate_structured_summary_parallel(context_chunks: List[str], patient_label: str, patient_type_hint: str, model: str) -> str:
-    """Generate structured summary using parallel prompts for better accuracy and speed.
+async def _generate_structured_summary_parallel(
+    context_chunks: List[str], 
+    patient_label: str, 
+    patient_type_hint: str, 
+    model: str = None
+) -> str:
+    """
+    Generate structured summary using parallel prompts for better accuracy and speed.
     
     This replaces the monolithic _generate_summary with a multi-stage parallel approach:
     1. Classify specialty
     2. Extract universal data in parallel (evolution, status, plan)
     3. Extract specialty data based on classification (oncology or speech)
     4. Combine into structured JSON following AIResponseSchema
+    
+    Args:
+        context_chunks: List of medical report text chunks
+        patient_label: Patient identifier for logging
+        patient_type_hint: Hint for patient type (optional)
+        model: LLM model name (defaults to environment variable)
+        
+    Returns:
+        JSON string with structured summary data
     """
+    # Use environment variable model if not specified
+    if model is None:
+        model = DEFAULT_MODEL
     context = "\n\n".join(context_chunks)
-    logger.info(f"Starting parallel structured summary generation for {patient_label}")
+    logger.info(f"Starting parallel structured summary generation for {patient_label} using model: {model}")
     
     try:
         # Step 1: Classify specialty (fast)
@@ -323,25 +514,41 @@ async def _generate_structured_summary_parallel(context_chunks: List[str], patie
         }
         
         # Step 5: Validate against schema
-        from schemas import AIResponseSchema
         try:
+            from schemas import AIResponseSchema
             validated = AIResponseSchema.model_validate(structured_response)
             clean_json = validated.model_dump_json(exclude_none=True, indent=2)
             logger.info(f"✓ Validated structured summary for {patient_label}")
             return clean_json
+        except ImportError:
+            logger.warning("schemas module not found, skipping validation")
+            return json.dumps(structured_response, indent=2)
         except Exception as e:
             logger.error(f"Schema validation failed: {e}")
             # Return unvalidated JSON as fallback
             return json.dumps(structured_response, indent=2)
     
-    except Exception as e:
-        logger.error(f"Parallel summary generation failed: {e}")
+    except asyncio.TimeoutError:
+        logger.error(f"⚠️ Parallel summary generation timed out for {patient_label}")
         # Fallback to minimal structure
         fallback = {
             "universal": {
-                "evolution": f"Medical summary for {patient_label}. Detailed extraction failed.",
-                "current_status": ["Data extraction error"],
-                "plan": ["Review medical records manually"]
+                "evolution": f"⚠️ Medical summary generation timed out for {patient_label}. Please retry.",
+                "current_status": ["⚠️ Data extraction timed out"],
+                "plan": ["Review medical records manually", "Retry summary generation"]
+            },
+            "specialty": "general"
+        }
+        return json.dumps(fallback, indent=2)
+    
+    except Exception as e:
+        logger.error(f"⚠️ Parallel summary generation failed for {patient_label}: {e}")
+        # Fallback to minimal structure
+        fallback = {
+            "universal": {
+                "evolution": f"⚠️ Medical summary generation failed for {patient_label}. Error: {str(e)}",
+                "current_status": ["⚠️ Data extraction error"],
+                "plan": ["Review medical records manually", "Contact system administrator"]
             },
             "specialty": "general"
         }

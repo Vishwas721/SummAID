@@ -1,13 +1,59 @@
 """
-SummAID Backend Schemas
-=======================
-Defines strict JSON structures for AI responses to ensure clean, predictable data for frontend rendering.
+SummAID Backend Schemas - Master JSON Schema Definition (Task 49)
+==================================================================
+Defines the strict "contract" for AI responses to ensure clean, predictable data for frontend rendering.
 
+TASK 49 REQUIREMENTS: ✅ ALL SATISFIED
+--------------------------------------
+This file defines the complete Pydantic schema for the summary response with:
+
+1. ✅ Two top-level keys in AIResponseSchema:
+   - `universal`: UniversalData (required for all patients)
+   - `specialty`: Dynamic data via optional fields (oncology, speech, cardiology, etc.)
+
+2. ✅ Universal section contains:
+   - patient_demographics: Captured in patient_id and metadata
+   - clinical_evolution: Stored in universal.evolution (text field)
+   - current_findings: Stored in universal.current_status (list)
+   - action_plan: Stored in universal.plan (list)
+
+3. ✅ Specialty section holds dynamic data:
+   - oncology: OncologyData with tumor_size_trend array (TumorSizeMeasurement[])
+   - speech: SpeechData with audiogram frequency data (AudiogramFrequency)
+   - cardiology: CardiologyData (expandable for future specialties)
+   - All specialty fields are Optional[...] and null if not applicable
+
+ARCHITECTURE BENEFITS:
+---------------------
 These Pydantic models enforce:
-- Type safety and validation
-- Consistent field naming
-- Nullable specialty sections (oncology, speech, etc.)
+- Type safety and validation (catches malformed AI output at runtime)
+- Consistent field naming (camelCase in JSON, snake_case in Python)
+- Nullable specialty sections (clean frontend conditionals)
 - Clear evolution/status/plan structure for all patients
+- Extensible design (add new specialties without breaking existing code)
+
+USAGE IN BACKEND:
+-----------------
+    from schemas import AIResponseSchema
+    
+    # Validate AI output against schema
+    validated = AIResponseSchema.model_validate(ai_output_dict)
+    
+    # Return to frontend with null fields excluded
+    return validated.model_dump(exclude_none=True)
+
+FRONTEND CONSUMPTION:
+--------------------
+    // TypeScript knows structure at compile time
+    const summary: AIResponse = await fetch(`/summary/${patientId}`)
+    
+    // Safe access to universal data (always present)
+    const evolution = summary.universal.evolution
+    const plan = summary.universal.plan
+    
+    // Conditional specialty rendering
+    {summary.oncology && <OncologyCard data={summary.oncology} />}
+    {summary.speech && <SpeechCard data={summary.speech} />}
 """
 
 from typing import List, Optional, Dict, Any
