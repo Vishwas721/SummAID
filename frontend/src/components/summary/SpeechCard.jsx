@@ -1,6 +1,6 @@
 import { Ear, Volume2 } from 'lucide-react'
 import { cn } from '../../lib/utils'
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts'
+import { AudiogramChart } from './AudiogramChart'
 
 /**
  * SpeechCard - Displays speech/audiology data.
@@ -23,14 +23,6 @@ export function SpeechCard({ speechData, citations, className }) {
     tinnitus,
     amplification
   } = speechData
-
-  // Prepare audiogram chart data
-  const frequencies = ['500Hz', '1000Hz', '2000Hz', '4000Hz', '8000Hz']
-  const audiogramData = frequencies.map(freq => ({
-    frequency: freq.replace('Hz', ''),
-    left: audiogram.left?.[freq] || null,
-    right: audiogram.right?.[freq] || null
-  })).filter(d => d.left !== null || d.right !== null)
 
   // Severity color
   const getSeverityColor = (severity) => {
@@ -92,54 +84,10 @@ export function SpeechCard({ speechData, citations, className }) {
       </div>
 
       {/* Audiogram Chart */}
-      {audiogramData.length > 0 && (
+      {audiogram && (audiogram.left || audiogram.right) && (
         <div className="mb-4">
-          <h3 className="text-sm font-semibold text-slate-700 dark:text-slate-300 mb-2">Audiogram (Hearing Thresholds)</h3>
-          <div className="h-48 bg-slate-50 dark:bg-slate-900/50 rounded-lg p-2">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={audiogramData}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                <XAxis 
-                  dataKey="frequency" 
-                  tick={{ fontSize: 10, fill: '#64748b' }}
-                  stroke="#cbd5e1"
-                  label={{ value: 'Frequency (Hz)', position: 'insideBottom', offset: -5, fontSize: 10 }}
-                />
-                <YAxis 
-                  tick={{ fontSize: 10, fill: '#64748b' }}
-                  stroke="#cbd5e1"
-                  label={{ value: 'dB HL', angle: -90, position: 'insideLeft', fontSize: 10 }}
-                  reversed={true}
-                />
-                <Tooltip 
-                  contentStyle={{ 
-                    backgroundColor: '#fff', 
-                    border: '1px solid #e2e8f0',
-                    borderRadius: '8px',
-                    fontSize: '11px'
-                  }}
-                />
-                <Legend 
-                  wrapperStyle={{ fontSize: '11px' }}
-                />
-                <Bar 
-                  dataKey="left" 
-                  fill="#06b6d4" 
-                  name="Left Ear"
-                  radius={[4, 4, 0, 0]}
-                />
-                <Bar 
-                  dataKey="right" 
-                  fill="#3b82f6" 
-                  name="Right Ear"
-                  radius={[4, 4, 0, 0]}
-                />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-          <p className="text-xs text-slate-500 dark:text-slate-400 mt-2 text-center">
-            Lower values = better hearing
-          </p>
+          <h3 className="text-sm font-semibold text-slate-700 dark:text-slate-300 mb-3">Clinical Audiogram</h3>
+          <AudiogramChart audiogram={audiogram} />
         </div>
       )}
 
