@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import axios from 'axios'
 import { Loader2, AlertTriangle } from 'lucide-react'
+import { PatientTimeline } from './PatientTimeline'
 import { EvolutionCard } from './EvolutionCard'
 import { ActionPlanCard } from './ActionPlanCard'
 import { VitalTrendsCard } from './VitalTrendsCard'
@@ -18,6 +19,7 @@ import { SpeechCard } from './SpeechCard'
  */
 export function SummaryGrid({ patientId }) {
   const [summaryData, setSummaryData] = useState(null)
+  const [reports, setReports] = useState([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
   const [userRole] = useState(localStorage.getItem('user_role') || 'DOCTOR')
@@ -25,10 +27,23 @@ export function SummaryGrid({ patientId }) {
   useEffect(() => {
     if (patientId && userRole === 'DOCTOR') {
       fetchSummary()
+      fetchReports()
     } else {
       setSummaryData(null)
+      setReports([])
     }
   }, [patientId, userRole])
+
+  const fetchReports = async () => {
+    try {
+      const url = `${import.meta.env.VITE_API_URL}/reports/${patientId}`
+      const response = await axios.get(url)
+      setReports(Array.isArray(response.data) ? response.data : [])
+    } catch (e) {
+      console.error('Failed to fetch reports:', e)
+      setReports([])
+    }
+  }
 
   const fetchSummary = async () => {
     setLoading(true)
@@ -125,6 +140,11 @@ export function SummaryGrid({ patientId }) {
             Patient ID: {patientId} {summaryData.specialty && `• ${summaryData.specialty.toUpperCase()}`}
           </p>
         </div>
+
+        {/* Patient Journey Timeline */}
+        {reports.length > 0 && (
+          <PatientTimeline reports={reports} className="mb-6" />
+        )}
 
         {/* Card Grid */}
         <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
