@@ -24,19 +24,29 @@ export function OncologyCard({ oncologyData, citations, className }) {
     treatment_response
   } = oncologyData
 
-  // Prepare tumor size chart data
+  // Prepare tumor size chart data with status
   const tumorChartData = tumor_size_trend.map(t => ({
     date: t.date || 'Unknown',
-    size: t.size_cm || 0
+    size: t.size_cm || 0,
+    status: t.status || null
   }))
 
-  // Calculate tumor trend
+  // Calculate tumor trend (use AI-provided status if available)
   const getTumorTrend = () => {
+    if (tumorChartData.length === 0) return 'stable'
+    
+    // Use latest measurement's status if available
+    const latestStatus = tumorChartData[tumorChartData.length - 1].status
+    if (latestStatus) {
+      return latestStatus.toLowerCase() // IMPROVING, WORSENING, STABLE
+    }
+    
+    // Fallback: calculate from measurements
     if (tumorChartData.length < 2) return 'stable'
     const latest = tumorChartData[tumorChartData.length - 1].size
     const previous = tumorChartData[tumorChartData.length - 2].size
-    if (latest > previous) return 'up'
-    if (latest < previous) return 'down'
+    if (latest > previous) return 'worsening'
+    if (latest < previous) return 'improving'
     return 'stable'
   }
 
@@ -85,8 +95,23 @@ export function OncologyCard({ oncologyData, citations, className }) {
         <div className="mb-4">
           <div className="flex items-center justify-between mb-2">
             <h3 className="text-sm font-semibold text-slate-700 dark:text-slate-300">Tumor Size Trend</h3>
-            {tumorTrend === 'up' && <TrendingUp className="h-4 w-4 text-red-500" />}
-            {tumorTrend === 'down' && <TrendingDown className="h-4 w-4 text-green-500" />}
+            <div className="flex items-center gap-1.5">
+              {(tumorTrend === 'worsening' || tumorTrend === 'up') && (
+                <>
+                  <TrendingUp className="h-4 w-4 text-red-500" />
+                  <span className="text-xs font-semibold text-red-600 dark:text-red-400">WORSENING</span>
+                </>
+              )}
+              {(tumorTrend === 'improving' || tumorTrend === 'down') && (
+                <>
+                  <TrendingDown className="h-4 w-4 text-green-500" />
+                  <span className="text-xs font-semibold text-green-600 dark:text-green-400">IMPROVING</span>
+                </>
+              )}
+              {tumorTrend === 'stable' && (
+                <span className="text-xs font-semibold text-slate-500 dark:text-slate-400">STABLE</span>
+              )}
+            </div>
           </div>
           
           {tumorChartData.length > 1 ? (

@@ -1,4 +1,4 @@
-import { Ear, Volume2 } from 'lucide-react'
+import { Ear, Volume2, TrendingUp, TrendingDown, ArrowUp, ArrowDown } from 'lucide-react'
 import { cn } from '../../lib/utils'
 import { AudiogramChart } from './AudiogramChart'
 
@@ -20,6 +20,7 @@ export function SpeechCard({ speechData, citations, className }) {
     speech_scores = {},
     hearing_loss_type,
     hearing_loss_severity,
+    hearing_trend,
     tinnitus,
     amplification
   } = speechData
@@ -43,14 +44,37 @@ export function SpeechCard({ speechData, citations, className }) {
       className
     )}>
       {/* Card Header */}
-      <div className="flex items-center gap-3 mb-4 pb-3 border-slate-200 dark:border-slate-700">
-        <div className="p-2 bg-gradient-to-br from-cyan-500 to-blue-600 rounded-lg">
-          <Ear className="h-5 w-5 text-white" />
+      <div className="flex items-center justify-between mb-4 pb-3 border-b border-slate-200 dark:border-slate-700">
+        <div className="flex items-center gap-3">
+          <div className="p-2 bg-gradient-to-br from-cyan-500 to-blue-600 rounded-lg">
+            <Ear className="h-5 w-5 text-white" />
+          </div>
+          <div>
+            <h2 className="text-lg font-bold text-slate-800 dark:text-slate-100">Speech & Audiology</h2>
+            <p className="text-xs text-slate-500 dark:text-slate-400">Hearing assessment</p>
+          </div>
         </div>
-        <div>
-          <h2 className="text-lg font-bold text-slate-800 dark:text-slate-100">Speech & Audiology</h2>
-          <p className="text-xs text-slate-500 dark:text-slate-400">Hearing assessment</p>
-        </div>
+        
+        {/* Hearing Trend Indicator */}
+        {hearing_trend && (
+          <div className="flex items-center gap-1.5">
+            {hearing_trend.toLowerCase() === 'worsening' && (
+              <>
+                <ArrowUp className="h-4 w-4 text-red-500" />
+                <span className="text-xs font-semibold text-red-600 dark:text-red-400">WORSENING</span>
+              </>
+            )}
+            {hearing_trend.toLowerCase() === 'improving' && (
+              <>
+                <ArrowDown className="h-4 w-4 text-green-500" />
+                <span className="text-xs font-semibold text-green-600 dark:text-green-400">IMPROVING</span>
+              </>
+            )}
+            {hearing_trend.toLowerCase() === 'stable' && (
+              <span className="text-xs font-semibold text-slate-500 dark:text-slate-400">STABLE</span>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Hearing Loss Summary */}
@@ -86,7 +110,15 @@ export function SpeechCard({ speechData, citations, className }) {
       {/* Audiogram Chart */}
       {audiogram && (audiogram.left || audiogram.right) && (
         <div className="mb-4">
-          <h3 className="text-sm font-semibold text-slate-700 dark:text-slate-300 mb-3">Clinical Audiogram</h3>
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-sm font-semibold text-slate-700 dark:text-slate-300">Clinical Audiogram</h3>
+            {audiogram.status === 'HIGH' && (
+              <div className="flex items-center gap-1.5 px-2 py-1 bg-red-100 dark:bg-red-900/30 rounded-full">
+                <ArrowUp className="h-3 w-3 text-red-600 dark:text-red-400" />
+                <span className="text-xs font-bold text-red-600 dark:text-red-400">HIGH LOSS</span>
+              </div>
+            )}
+          </div>
           <AudiogramChart audiogram={audiogram} />
         </div>
       )}

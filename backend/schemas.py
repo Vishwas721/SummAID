@@ -46,6 +46,7 @@ class TumorSizeMeasurement(BaseModel):
     date: str = Field(..., description="Date of measurement (YYYY-MM-DD or YYYY-MM)")
     size_cm: float = Field(..., description="Tumor size in centimeters", ge=0)
     location: Optional[str] = Field(None, description="Anatomical location if multiple tumors")
+    status: Optional[str] = Field(None, description="Trend status: IMPROVING, WORSENING, or STABLE")
 
     @validator('date')
     def validate_date_format(cls, v):
@@ -115,6 +116,7 @@ class Audiogram(BaseModel):
     left: Optional[AudiogramFrequency] = Field(None, description="Left ear audiogram")
     right: Optional[AudiogramFrequency] = Field(None, description="Right ear audiogram")
     test_date: Optional[str] = Field(None, description="Date of audiogram test")
+    status: Optional[str] = Field(None, description="Hearing status: HIGH (significant loss), NORMAL, or LOW")
 
 
 class SpeechScores(BaseModel):
@@ -161,6 +163,10 @@ class SpeechData(BaseModel):
     hearing_loss_severity: Optional[str] = Field(
         None,
         description="Severity classification (e.g., 'Mild', 'Moderate', 'Severe', 'Profound')"
+    )
+    hearing_trend: Optional[str] = Field(
+        None,
+        description="Hearing trend over time: IMPROVING, WORSENING, or STABLE"
     )
     tinnitus: Optional[bool] = Field(
         None,

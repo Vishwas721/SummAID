@@ -169,10 +169,16 @@ Extract:
 5. Biomarkers (ER, PR, HER2, Ki-67, etc.)
 6. Treatment response
 
+TREND ANALYSIS INSTRUCTIONS:
+- For tumor_size_trend: If multiple measurements exist, analyze the trend
+- Compare latest value to earliest value
+- Assign status: "IMPROVING" (decreasing size), "WORSENING" (increasing size), "STABLE" (no significant change)
+- For biomarkers: Mark as "HIGH", "LOW", or "NORMAL" based on clinical context
+
 RETURN ONLY THIS JSON STRUCTURE (use null for missing data):
 {{
   "tumor_size_trend": [
-    {{"date": "YYYY-MM-DD", "size_cm": 2.3}}
+    {{"date": "YYYY-MM-DD", "size_cm": 2.3, "status": "IMPROVING"}}
   ],
   "tnm_staging": "T2N0M0",
   "cancer_type": "Cancer type",
@@ -213,16 +219,30 @@ Extract:
 5. Tinnitus presence (true/false)
 6. Amplification device
 
+TREND ANALYSIS INSTRUCTIONS:
+- For audiogram values: Compare to previous reports if available
+  * Higher dB values = worse hearing (WORSENING)
+  * Lower dB values = better hearing (IMPROVING)
+  * No change = STABLE
+- Normal hearing: 0-20 dB HL
+- Mild loss: 21-40 dB HL
+- Moderate loss: 41-70 dB HL (assign status "HIGH")
+- Severe loss: 71-90 dB HL (assign status "HIGH")
+- Profound loss: 91+ dB HL (assign status "HIGH")
+- If multiple audiograms exist, calculate trend and add "hearing_trend" field: "IMPROVING", "WORSENING", or "STABLE"
+
 RETURN ONLY THIS JSON STRUCTURE (use null for missing data):
 {{
   "audiogram": {{
     "left": {{"500Hz": 45, "1000Hz": 50, "2000Hz": 55, "4000Hz": 60}},
     "right": {{"500Hz": 40, "1000Hz": 48, "2000Hz": 52, "4000Hz": 58}},
-    "test_date": "YYYY-MM-DD"
+    "test_date": "YYYY-MM-DD",
+    "status": "HIGH"
   }},
   "speech_scores": {{"srt_db": 45, "wrs_percent": 82}},
   "hearing_loss_type": "Sensorineural",
   "hearing_loss_severity": "Moderate",
+  "hearing_trend": "STABLE",
   "tinnitus": true,
   "amplification": "Device description"
 }}
