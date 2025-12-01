@@ -93,6 +93,10 @@ class OncologyData(BaseModel):
         None,
         description="Response to current treatment (e.g., 'Partial Response', 'Stable Disease')"
     )
+    pertinent_negatives: Optional[List[str]] = Field(
+        None,
+        description="Major oncology findings that are absent (e.g., 'No metastasis', 'No lymph node involvement')"
+    )
 
 
 # ============================================================================
@@ -179,6 +183,10 @@ class SpeechData(BaseModel):
     amplification: Optional[str] = Field(
         None,
         description="Current amplification device (e.g., 'Hearing Aid', 'Cochlear Implant', 'None')"
+    )
+    pertinent_negatives: Optional[List[str]] = Field(
+        None,
+        description="Audiology findings that are absent (e.g., 'No conductive loss', 'No middle ear pathology')"
     )
 
 

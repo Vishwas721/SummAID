@@ -85,6 +85,7 @@ Focus on:
 - Initial presentation/diagnosis
 - Key treatments or interventions
 - Current status
+- **PERTINENT NEGATIVES**: Include crucial conditions that were checked but are ABSENT (e.g., "No metastasis", "No lymph node involvement", "No conductive component")
 
 Medical Reports:
 {context[:8000]}
@@ -102,6 +103,7 @@ Focus on:
 - Latest test results or findings
 - Current treatment status
 - Active issues
+- **PERTINENT NEGATIVES**: Explicitly list major conditions or symptoms that were RULED OUT or are ABSENT (e.g., "No fever", "No bleeding", "No progression")
 
 RETURN ONLY bullet points, one per line, starting with a dash. No other text.
 
@@ -168,6 +170,7 @@ Extract:
 4. Grade
 5. Biomarkers (ER, PR, HER2, Ki-67, etc.)
 6. Treatment response
+7. **PERTINENT NEGATIVES**: List major oncology findings that are ABSENT (e.g., "No metastasis", "No lymph node involvement", "No distant spread")
 
 TREND ANALYSIS INSTRUCTIONS:
 - For tumor_size_trend: If multiple measurements exist, analyze the trend
@@ -184,7 +187,8 @@ RETURN ONLY THIS JSON STRUCTURE (use null for missing data):
   "cancer_type": "Cancer type",
   "grade": "Grade description",
   "biomarkers": {{"ER": "positive", "PR": "positive"}},
-  "treatment_response": "Response description"
+  "treatment_response": "Response description",
+  "pertinent_negatives": ["No metastasis", "No lymph node involvement"]
 }}
 
 Medical Reports:
@@ -218,6 +222,7 @@ Extract:
 4. Severity (Mild, Moderate, Severe, Profound)
 5. Tinnitus presence (true/false)
 6. Amplification device
+7. **PERTINENT NEGATIVES**: List audiology findings that are ABSENT (e.g., "No conductive component", "No air-bone gap", "No middle ear pathology", "No acoustic reflex abnormality")
 
 TREND ANALYSIS INSTRUCTIONS:
 - For audiogram values: Compare to previous reports if available
@@ -244,7 +249,8 @@ RETURN ONLY THIS JSON STRUCTURE (use null for missing data):
   "hearing_loss_severity": "Moderate",
   "hearing_trend": "STABLE",
   "tinnitus": true,
-  "amplification": "Device description"
+  "amplification": "Device description",
+  "pertinent_negatives": ["No conductive component", "No middle ear pathology"]
 }}
 
 Medical Reports:

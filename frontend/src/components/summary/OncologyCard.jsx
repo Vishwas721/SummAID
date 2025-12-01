@@ -1,4 +1,4 @@
-import { Heart, TrendingUp, TrendingDown } from 'lucide-react'
+import { Heart, TrendingUp, TrendingDown, CheckCircle2 } from 'lucide-react'
 import { cn } from '../../lib/utils'
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 
@@ -21,7 +21,8 @@ export function OncologyCard({ oncologyData, citations, className }) {
     cancer_type,
     grade,
     biomarkers = {},
-    treatment_response
+    treatment_response,
+    pertinent_negatives = []
   } = oncologyData
 
   // Prepare tumor size chart data with status
@@ -174,9 +175,24 @@ export function OncologyCard({ oncologyData, citations, className }) {
 
       {/* Treatment Response */}
       {treatment_response && (
-        <div className="p-3 bg-green-50 dark:bg-green-900/20 rounded-lg border border-green-200 dark:border-green-800">
+        <div className="p-3 bg-green-50 dark:bg-green-900/20 rounded-lg border border-green-200 dark:border-green-800 mb-4">
           <p className="text-xs text-green-600 dark:text-green-400 font-medium mb-1">Treatment Response</p>
           <p className="text-sm text-slate-700 dark:text-slate-300">{treatment_response}</p>
+        </div>
+      )}
+
+      {/* Pertinent Negatives */}
+      {pertinent_negatives && pertinent_negatives.length > 0 && (
+        <div className="p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-200 dark:border-blue-800">
+          <p className="text-xs text-blue-600 dark:text-blue-400 font-medium mb-2">Pertinent Negatives</p>
+          <ul className="space-y-1.5">
+            {pertinent_negatives.map((item, idx) => (
+              <li key={idx} className="flex items-start gap-2 text-sm text-slate-700 dark:text-slate-300">
+                <CheckCircle2 className="h-4 w-4 text-green-500 flex-shrink-0 mt-0.5" />
+                <span>{item}</span>
+              </li>
+            ))}
+          </ul>
         </div>
       )}
     </div>
