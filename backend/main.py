@@ -796,21 +796,51 @@ async def summarize_patient(
         
         # Build citations array with preview and full text
         PREVIEW_LEN = 160
+        def _classify_sections(chunk_text: str, metadata: dict) -> list:
+            """Heuristic mapping of a source chunk to summary sections.
+            We do not have explicit model-level provenance, so we approximate based on keywords and report_type.
+            Returns list of section keys: evolution | labs | key_findings | recommendations | oncology | speech.
+            """
+            sections = set()
+            lower = chunk_text.lower()
+            rpt_type = (metadata or {}).get('report_type', '')
+            if rpt_type:
+                if 'onco' in rpt_type.lower() or 'cancer' in lower:
+                    sections.add('oncology')
+                if 'audiology' in rpt_type.lower() or 'speech' in rpt_type.lower() or 'hearing' in lower:
+                    sections.add('speech')
+                if 'lab' in rpt_type.lower() or 'panel' in lower:
+                    sections.add('labs')
+            # Keyword heuristics
+            if any(k in lower for k in ['bp', 'blood pressure', 'lab', 'wbc', 'hgb', 'platelet', 'potassium', 'sodium']):
+                sections.add('labs')
+            if any(k in lower for k in ['recommend', 'continue', 'start', 'increase', 'decrease', 'follow up', 'monitor']):
+                sections.add('recommendations')
+            if any(k in lower for k in ['tumor', 'metastas', 'chemo', 'radiation', 'oncology', 'lesion']):
+                sections.add('oncology')
+            if any(k in lower for k in ['audiogram', 'tymp', 'speech discrimination', 'tinnitus', 'hearing']):
+                sections.add('speech')
+            # Findings keywords
+            if any(k in lower for k in ['findings', 'impression', 'assessment', 'noted', 'observed']):
+                sections.add('key_findings')
+            # Default fallback always include evolution narrative
+            sections.add('evolution')
+            return list(sorted(sections))
+
         citations = []
         for chunk_id, report_id, chunk_text, metadata in chunk_data:
             norm_full = _normalize_text(chunk_text)
             preview = norm_full[:PREVIEW_LEN] + ("…" if len(norm_full) > PREVIEW_LEN else "")
-            
-            # Enrich metadata with report_id for frontend routing
             enriched_meta = (metadata or {}).copy()
             enriched_meta.setdefault('report_id', report_id)
-            
+            sections = _classify_sections(norm_full, enriched_meta)
             citations.append({
                 "source_chunk_id": chunk_id,
                 "report_id": report_id,
                 "source_text_preview": preview,
                 "source_full_text": norm_full,
-                "source_metadata": enriched_meta
+                "source_metadata": enriched_meta,
+                "sections": sections
             })
         
         # 5. Generate summary using parallel prompt system
@@ -1141,8 +1171,35 @@ def fetch_patient_summary(patient_id: int = Path(..., description="Patient ID to
         if not row:
             raise HTTPException(status_code=404, detail="Summary not prepared")
         summary_text, patient_type, chief_complaint, citations_json, generated_at = row
-        # citations_json is already JSONB; ensure proper Python structure
         citations = citations_json if isinstance(citations_json, list) else citations_json
+
+        def _classify_sections(chunk_text: str, metadata: dict) -> list:
+            sections = set(); lower = (chunk_text or '').lower(); rpt_type = (metadata or {}).get('report_type', '')
+            if rpt_type:
+                rt_low = rpt_type.lower()
+                if 'onco' in rt_low or 'cancer' in lower: sections.add('oncology')
+                if any(t in rt_low for t in ['audiology','speech']) or 'hearing' in lower: sections.add('speech')
+                if 'lab' in rt_low or 'panel' in lower: sections.add('labs')
+            if any(k in lower for k in ['bp','blood pressure','lab','wbc','hgb','platelet','potassium','sodium']): sections.add('labs')
+            if any(k in lower for k in ['recommend','continue','start','increase','decrease','follow up','monitor']): sections.add('recommendations')
+            if any(k in lower for k in ['tumor','metastas','chemo','radiation','oncology','lesion']): sections.add('oncology')
+            if any(k in lower for k in ['audiogram','tymp','speech discrimination','tinnitus','hearing']): sections.add('speech')
+            if any(k in lower for k in ['findings','impression','assessment','noted','observed']): sections.add('key_findings')
+            sections.add('evolution'); return list(sorted(sections))
+
+        changed = False
+        if isinstance(citations, list):
+            for c in citations:
+                if isinstance(c, dict) and 'sections' not in c and 'source_full_text' in c:
+                    c['sections'] = _classify_sections(c.get('source_full_text',''), c.get('source_metadata', {})); changed = True
+        if changed:
+            try:
+                conn2 = get_db_connection(); cur2 = conn2.cursor()
+                cur2.execute("UPDATE patient_summaries SET citations=%s::jsonb WHERE patient_id=%s", (json.dumps(citations), patient_id))
+                conn2.commit(); cur2.close(); conn2.close()
+            except Exception as _e:
+                logger.debug(f"Citation upgrade persist failed for patient {patient_id}: {_e}")
+
         return {
             "summary_text": summary_text,
             "citations": citations,

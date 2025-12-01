@@ -54,7 +54,7 @@ export function VitalTrendsCard({ vitalData, className }) {
   }
 
   return (
-    <div className={cn(
+    <div id="vital-trends-card" className={cn(
       "bg-white dark:bg-slate-800 rounded-xl shadow-lg border border-slate-200 dark:border-slate-700 p-6 hover:shadow-xl transition-shadow",
       className
     )}>
