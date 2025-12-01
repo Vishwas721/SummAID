@@ -12,7 +12,7 @@ import { AudiogramChart } from './AudiogramChart'
  * - Tinnitus status
  * - Amplification recommendation
  */
-export function SpeechCard({ speechData, citations, className }) {
+export function SpeechCard({ speechData, citations, onOpenCitation, className }) {
   if (!speechData) return null
 
   const {
@@ -178,6 +178,28 @@ export function SpeechCard({ speechData, citations, className }) {
               </li>
             ))}
           </ul>
+        </div>
+      )}
+
+      {/* Sources */}
+      {citations && citations.length > 0 && (
+        <div className="mt-4 pt-3 border-t border-slate-100 dark:border-slate-700">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-xs text-slate-500 dark:text-slate-400">Sources:</span>
+            {(citations.slice(0, 6)).map((c, idx) => (
+              <button
+                key={`${c.source_chunk_id}-${idx}`}
+                onClick={() => onOpenCitation && onOpenCitation(c)}
+                className="px-1.5 py-0.5 text-xs font-medium bg-indigo-100 dark:bg-indigo-900 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-200 dark:hover:bg-indigo-800 rounded"
+                title={c.source_text_preview}
+              >
+                [{idx + 1}]
+              </button>
+            ))}
+            {citations.length > 6 && (
+              <span className="text-xs text-slate-500 dark:text-slate-400">+{citations.length - 6} more</span>
+            )}
+          </div>
         </div>
       )}
     </div>

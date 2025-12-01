@@ -19,7 +19,7 @@ from parallel_prompts import _generate_structured_summary_parallel
 # DATABASE UTILITIES
 # =============================================================================
 
-def get_all_chunks_for_patient(patient_id: int) -> List[str]:
+def get_all_chunks_for_patient(patient_id: int) -> List[Tuple[int, int, str, dict]]:
     """
     Retrieve all decrypted text chunks for a given patient from PostgreSQL.
     
@@ -27,7 +27,7 @@ def get_all_chunks_for_patient(patient_id: int) -> List[str]:
         patient_id: The patient ID to retrieve chunks for
         
     Returns:
-        List of decrypted chunk text strings
+        List of tuples: (chunk_id, report_id, chunk_text, source_metadata)
         
     Raises:
         HTTPException: If patient not found or database error occurs
@@ -47,10 +47,14 @@ def get_all_chunks_for_patient(patient_id: int) -> List[str]:
             conn.close()
             raise HTTPException(status_code=404, detail=f"No reports found for patient_id={patient_id}")
         
-        # Retrieve all chunks for these reports, decrypted
+        # Retrieve all chunks for these reports, decrypted with metadata
         placeholders = ','.join(['%s'] * len(report_ids))
         chunk_sql = f"""
-            SELECT pgp_sym_decrypt(c.chunk_text_encrypted, %s)::text AS chunk_text
+            SELECT 
+                c.chunk_id,
+                c.report_id,
+                pgp_sym_decrypt(c.chunk_text_encrypted, %s)::text AS chunk_text,
+                c.source_metadata
             FROM report_chunks c
             WHERE c.report_id IN ({placeholders})
             ORDER BY c.report_id, c.chunk_id
@@ -58,7 +62,7 @@ def get_all_chunks_for_patient(patient_id: int) -> List[str]:
         cur.execute(chunk_sql, [ENCRYPTION_KEY, *report_ids])
         rows = cur.fetchall()
         
-        chunks = [row[0] for row in rows if row and row[0]]
+        chunks = [(row[0], row[1], row[2], row[3]) for row in rows if row and row[2]]
         
         cur.close()
         conn.close()
@@ -493,6 +497,7 @@ class SummaryResponse(BaseModel):
     labs: List[str] = Field(default_factory=list, description="Lab values and current status")
     key_findings: List[str] = Field(default_factory=list, description="Key clinical findings")
     recommendations: List[str] = Field(default_factory=list, description="Treatment plan and recommendations")
+    citations: List[dict] = Field(default_factory=list, description="Source citations with chunk IDs and report IDs")
 
 def _embed_text(text: str) -> List[float]:
     """Call local Ollama embed endpoint and return embedding (list of floats)."""
@@ -776,17 +781,37 @@ async def summarize_patient(
         cur.close()
         conn.close()
         
-        # 2. Retrieve all chunks from database
+        # 2. Retrieve all chunks from database (with metadata for citations)
         logger.info(f"Retrieving chunks for patient {patient_id}")
-        chunks = get_all_chunks_for_patient(patient_id)
+        chunk_data = get_all_chunks_for_patient(patient_id)
         
         # 3. Check if empty
-        if not chunks:
+        if not chunk_data:
             raise HTTPException(status_code=404, detail=f"No text chunks found for patient_id={patient_id}")
         
-        # 4. Concatenate all chunks into single context string
-        full_context = "\n\n".join(chunks)
-        logger.info(f"Context prepared: {len(full_context)} characters from {len(chunks)} chunks")
+        # 4. Extract text for context and prepare citations
+        chunk_texts = [chunk[2] for chunk in chunk_data]  # Extract chunk_text
+        full_context = "\n\n".join(chunk_texts)
+        logger.info(f"Context prepared: {len(full_context)} characters from {len(chunk_data)} chunks")
+        
+        # Build citations array with preview and full text
+        PREVIEW_LEN = 160
+        citations = []
+        for chunk_id, report_id, chunk_text, metadata in chunk_data:
+            norm_full = _normalize_text(chunk_text)
+            preview = norm_full[:PREVIEW_LEN] + ("…" if len(norm_full) > PREVIEW_LEN else "")
+            
+            # Enrich metadata with report_id for frontend routing
+            enriched_meta = (metadata or {}).copy()
+            enriched_meta.setdefault('report_id', report_id)
+            
+            citations.append({
+                "source_chunk_id": chunk_id,
+                "report_id": report_id,
+                "source_text_preview": preview,
+                "source_full_text": norm_full,
+                "source_metadata": enriched_meta
+            })
         
         # 5. Generate summary using parallel prompt system
         logger.info(f"Generating parallel summary for patient {patient_id} ({patient_type})")
@@ -796,12 +821,13 @@ async def summarize_patient(
             patient_type=patient_type
         )
         
-        # 6. Build response matching SummaryResponse schema (4 keys)
+        # 6. Build response matching SummaryResponse schema (4 keys + citations)
         response_data = {
             "evolution": summary_dict.get("evolution", "No evolution data available"),
             "labs": summary_dict.get("labs", []),
             "key_findings": summary_dict.get("key_findings", []),
-            "recommendations": summary_dict.get("recommendations", [])
+            "recommendations": summary_dict.get("recommendations", []),
+            "citations": citations
         }
         
         # 7. Persist summary to database
@@ -813,7 +839,7 @@ async def summarize_patient(
             # Convert to JSON string for storage
             summary_text = json.dumps(response_data, indent=2)
             
-            # Upsert patient_summaries
+            # Upsert patient_summaries with citations
             cur2.execute("""
                 INSERT INTO patient_summaries (patient_id, summary_text, patient_type, chief_complaint, citations)
                 VALUES (%s, %s, %s, %s, %s::jsonb)
@@ -823,7 +849,7 @@ async def summarize_patient(
                       chief_complaint = EXCLUDED.chief_complaint,
                       citations = EXCLUDED.citations,
                       generated_at = CURRENT_TIMESTAMP
-            """, (patient_id, summary_text, patient_type, payload.chief_complaint, json.dumps([])))
+            """, (patient_id, summary_text, patient_type, payload.chief_complaint, json.dumps(citations)))
             
             # Mark chart as prepared
             cur2.execute("UPDATE patients SET chart_prepared_at = CURRENT_TIMESTAMP WHERE patient_id=%s", (patient_id,))
@@ -1135,6 +1161,60 @@ def fetch_patient_summary(patient_id: int = Path(..., description="Patient ID to
     finally:
         if conn:
             conn.close()
+
+
+@app.get("/report/{report_id}/pdf")
+async def get_report_pdf(report_id: int = Path(..., description="Report ID to fetch PDF for")):
+    """Fetch the original PDF file for a report to display alongside citations."""
+    from fastapi.responses import Response
+    
+    conn = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        
+        # Get PDF file path from reports table
+        cur.execute("""
+            SELECT report_filepath_pointer, patient_id 
+            FROM reports 
+            WHERE report_id = %s
+        """, (report_id,))
+        
+        row = cur.fetchone()
+        if not row:
+            cur.close()
+            conn.close()
+            raise HTTPException(status_code=404, detail=f"Report {report_id} not found")
+        
+        pdf_path, patient_id = row[0], row[1]
+        cur.close()
+        conn.close()
+        
+        # Check if file exists
+        if not os.path.exists(pdf_path):
+            raise HTTPException(status_code=404, detail=f"PDF file not found at {pdf_path}")
+        
+        # Read PDF file
+        with open(pdf_path, 'rb') as f:
+            pdf_content = f.read()
+        
+        logger.info(f"Serving PDF for report_id={report_id}, patient_id={patient_id}, size={len(pdf_content)} bytes")
+        
+        # Return PDF with proper content type
+        return Response(
+            content=pdf_content,
+            media_type="application/pdf",
+            headers={
+                "Content-Disposition": f"inline; filename=report_{report_id}.pdf",
+                "Access-Control-Allow-Origin": FRONTEND_ORIGIN
+            }
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"Error fetching PDF for report {report_id}")
+        raise HTTPException(status_code=500, detail=f"Error fetching PDF: {e}")
 
 
 @app.post("/save_summary")

@@ -24,6 +24,9 @@ export function SummaryGrid({ patientId }) {
   const [error, setError] = useState(null)
   const [userRole] = useState(localStorage.getItem('user_role') || 'DOCTOR')
   const [timelineExpanded, setTimelineExpanded] = useState(false)
+  const [selectedCitation, setSelectedCitation] = useState(null)
+  const [pdfUrl, setPdfUrl] = useState(null)
+  const [pdfError, setPdfError] = useState(null)
 
   useEffect(() => {
     if (patientId && userRole === 'DOCTOR') {
@@ -44,6 +47,33 @@ export function SummaryGrid({ patientId }) {
       console.error('Failed to fetch reports:', e)
       setReports([])
     }
+  }
+
+  const openCitation = async (citation) => {
+    try {
+      setPdfError(null)
+      setSelectedCitation(citation)
+      const apiUrl = import.meta.env.VITE_API_URL
+      const res = await fetch(`${apiUrl}/report/${citation.report_id}/pdf`)
+      if (!res.ok) {
+        throw new Error(await res.text())
+      }
+      const blob = await res.blob()
+      if (pdfUrl) URL.revokeObjectURL(pdfUrl)
+      const url = URL.createObjectURL(blob)
+      setPdfUrl(url)
+    } catch (e) {
+      console.error('Failed to open citation PDF:', e)
+      setPdfError(e?.message || 'Failed to load PDF')
+      setPdfUrl(null)
+    }
+  }
+
+  const closePdfViewer = () => {
+    if (pdfUrl) URL.revokeObjectURL(pdfUrl)
+    setPdfUrl(null)
+    setSelectedCitation(null)
+    setPdfError(null)
   }
 
   const fetchSummary = async () => {
@@ -148,6 +178,7 @@ export function SummaryGrid({ patientId }) {
           <EvolutionCard 
             evolution={summaryData.universal?.evolution} 
             citations={summaryData.citations}
+            onOpenCitation={openCitation}
             className="lg:col-span-2"
           />
 
@@ -156,6 +187,7 @@ export function SummaryGrid({ patientId }) {
             currentStatus={summaryData.universal?.current_status || []}
             plan={summaryData.universal?.plan || []}
             citations={summaryData.citations}
+            onOpenCitation={openCitation}
           />
 
           {/* Vital Trends Card - Universal, shown if data exists */}
@@ -169,6 +201,7 @@ export function SummaryGrid({ patientId }) {
             <OncologyCard 
               oncologyData={summaryData.oncology}
               citations={summaryData.citations}
+              onOpenCitation={openCitation}
               className="lg:col-span-2"
             />
           )}
@@ -178,6 +211,7 @@ export function SummaryGrid({ patientId }) {
             <SpeechCard 
               speechData={summaryData.speech}
               citations={summaryData.citations}
+              onOpenCitation={openCitation}
               className="lg:col-span-2"
             />
           )}
@@ -226,6 +260,40 @@ export function SummaryGrid({ patientId }) {
           </div>
         )}
       </div>
+
+      {/* Sidebar removed by user request */}
+
+      {/* Parent-managed PDF Viewer Modal */}
+      {selectedCitation && (pdfUrl || pdfError) && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-6">
+          <div className="bg-white dark:bg-slate-800 rounded-xl shadow-2xl w-full max-w-5xl h-[90vh] flex flex-col">
+            <div className="flex items-center justify-between p-4 border-b border-slate-200 dark:border-slate-700">
+              <div>
+                <h3 className="text-lg font-semibold text-slate-800 dark:text-slate-100">Original Document</h3>
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                  Report ID: {selectedCitation.report_id} • Chunk: {selectedCitation.source_chunk_id}
+                </p>
+              </div>
+              <button onClick={closePdfViewer} className="p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition-colors">
+                ✕
+              </button>
+            </div>
+            <div className="flex-1 overflow-hidden">
+              {pdfError ? (
+                <div className="h-full w-full flex items-center justify-center">
+                  <p className="text-sm text-red-600 dark:text-red-400">{pdfError}</p>
+                </div>
+              ) : (
+                <iframe src={pdfUrl} className="w-full h-full" title="PDF Viewer" />
+              )}
+            </div>
+            <div className="p-4 border-t border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 max-h-48 overflow-y-auto">
+              <p className="text-xs font-medium text-slate-600 dark:text-slate-400 mb-2">Cited Text:</p>
+              <p className="text-sm text-slate-700 dark:text-slate-300">{selectedCitation.source_full_text}</p>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

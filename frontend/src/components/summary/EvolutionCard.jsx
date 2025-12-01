@@ -6,7 +6,7 @@ import { cn } from '../../lib/utils'
  * 
  * Shows a 2-3 sentence summary of how the patient's condition has evolved over time.
  */
-export function EvolutionCard({ evolution, citations, className }) {
+export function EvolutionCard({ evolution, citations, onOpenCitation, className }) {
   return (
     <div className={cn(
       "bg-white dark:bg-slate-800 rounded-xl shadow-lg border border-slate-200 dark:border-slate-700 p-6 hover:shadow-xl transition-shadow",
@@ -36,12 +36,25 @@ export function EvolutionCard({ evolution, citations, className }) {
         )}
       </div>
 
-      {/* Optional: Citation indicators */}
+      {/* Sources: clickable citation numbers for this section */}
       {citations && citations.length > 0 && (
         <div className="mt-4 pt-3 border-t border-slate-100 dark:border-slate-700">
-          <p className="text-xs text-slate-500 dark:text-slate-400">
-            Based on {citations.length} source{citations.length !== 1 ? 's' : ''}
-          </p>
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-xs text-slate-500 dark:text-slate-400">Sources:</span>
+            {(citations.slice(0, 6)).map((c, idx) => (
+              <button
+                key={`${c.source_chunk_id}-${idx}`}
+                onClick={() => onOpenCitation && onOpenCitation(c)}
+                className="px-1.5 py-0.5 text-xs font-medium bg-indigo-100 dark:bg-indigo-900 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-200 dark:hover:bg-indigo-800 rounded"
+                title={c.source_text_preview}
+              >
+                [{idx + 1}]
+              </button>
+            ))}
+            {citations.length > 6 && (
+              <span className="text-xs text-slate-500 dark:text-slate-400">+{citations.length - 6} more</span>
+            )}
+          </div>
         </div>
       )}
     </div>
