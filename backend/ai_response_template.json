@@ -1,0 +1,77 @@
+{
+  "universal": {
+    "evolution": "Brief medical journey summary describing diagnosis, progression, and current state",
+    "current_status": [
+      "Current condition point 1",
+      "Current condition point 2",
+      "Current condition point 3"
+    ],
+    "plan": [
+      "Next step or treatment 1",
+      "Next step or treatment 2",
+      "Follow-up action 3"
+    ]
+  },
+  "oncology": {
+    "_comment": "Set to null if patient is NOT an oncology case",
+    "tumor_size_trend": [
+      {"date": "2024-01-15", "size_cm": 2.8},
+      {"date": "2024-04-10", "size_cm": 2.1},
+      {"date": "2024-07-22", "size_cm": 1.5}
+    ],
+    "tnm_staging": "T2N0M0",
+    "cancer_type": "Invasive Ductal Carcinoma",
+    "grade": "Grade 2",
+    "biomarkers": {
+      "ER": "positive",
+      "PR": "positive",
+      "HER2": "negative"
+    },
+    "treatment_response": "Partial Response"
+  },
+  "speech": {
+    "_comment": "Set to null if patient is NOT a speech/audiology case",
+    "audiogram": {
+      "left": {
+        "500Hz": 45,
+        "1000Hz": 50,
+        "2000Hz": 55,
+        "4000Hz": 60,
+        "8000Hz": 65
+      },
+      "right": {
+        "500Hz": 40,
+        "1000Hz": 48,
+        "2000Hz": 52,
+        "4000Hz": 58,
+        "8000Hz": 62
+      },
+      "test_date": "2024-11-15"
+    },
+    "speech_scores": {
+      "srt_db": 45,
+      "wrs_percent": 82,
+      "mcl_db": 65,
+      "ucl_db": 95
+    },
+    "hearing_loss_type": "Sensorineural",
+    "hearing_loss_severity": "Moderate",
+    "tinnitus": true,
+    "balance_issues": false,
+    "amplification": "Bilateral Hearing Aids"
+  },
+  "cardiology": {
+    "_comment": "Set to null if patient is NOT a cardiology case",
+    "ejection_fraction": 55,
+    "nyha_class": "II",
+    "blood_pressure_trend": [
+      {"date": "2024-10-01", "systolic": 135, "diastolic": 85},
+      {"date": "2024-11-01", "systolic": 128, "diastolic": 82}
+    ],
+    "ecg_findings": ["Normal sinus rhythm", "No ST changes"],
+    "medications": ["Lisinopril 10mg daily", "Metoprolol 50mg BID"]
+  },
+  "generated_at": "2024-12-01T14:30:00Z",
+  "patient_id": 123,
+  "specialty": "oncology"
+}

@@ -5,6 +5,7 @@ import axios from 'axios'
 import jsPDF from 'jspdf'
 import { useSpeechRecognition } from '../hooks/useSpeechRecognition'
 import { SummaryPanel } from './SummaryPanel'
+import { SummaryGrid } from './summary/SummaryGrid'
 
 export function ToolsSidebar({ patientId }) {
   const [userRole] = useState(localStorage.getItem('user_role') || 'DOCTOR')
@@ -201,7 +202,7 @@ export function ToolsSidebar({ patientId }) {
       <div className="flex-1 flex flex-col overflow-hidden bg-white dark:bg-slate-900">
         {activeTab === 'summary' && (
           <div className="flex-1 overflow-auto">
-            <SummaryPanel patientId={patientId} />
+            <SummaryGrid patientId={patientId} />
           </div>
         )}
 

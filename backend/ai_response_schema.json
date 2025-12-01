@@ -1,0 +1,643 @@
+{
+  "$defs": {
+    "Audiogram": {
+      "description": "Complete audiogram data for both ears.",
+      "properties": {
+        "left": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AudiogramFrequency"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Left ear audiogram"
+        },
+        "right": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AudiogramFrequency"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Right ear audiogram"
+        },
+        "test_date": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Date of audiogram test",
+          "title": "Test Date"
+        }
+      },
+      "title": "Audiogram",
+      "type": "object"
+    },
+    "AudiogramFrequency": {
+      "description": "Hearing threshold at specific frequencies.",
+      "properties": {
+        "500Hz": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Hearing threshold at 500 Hz (dB HL)",
+          "title": "500Hz"
+        },
+        "1000Hz": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Hearing threshold at 1000 Hz (dB HL)",
+          "title": "1000Hz"
+        },
+        "2000Hz": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Hearing threshold at 2000 Hz (dB HL)",
+          "title": "2000Hz"
+        },
+        "4000Hz": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Hearing threshold at 4000 Hz (dB HL)",
+          "title": "4000Hz"
+        },
+        "8000Hz": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Hearing threshold at 8000 Hz (dB HL)",
+          "title": "8000Hz"
+        }
+      },
+      "title": "AudiogramFrequency",
+      "type": "object"
+    },
+    "CardiologyData": {
+      "description": "Cardiology-specific patient data.\nNull if patient is not a cardiology case.",
+      "properties": {
+        "ejection_fraction": {
+          "anyOf": [
+            {
+              "maximum": 100,
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Left ventricular ejection fraction (percentage)",
+          "title": "Ejection Fraction"
+        },
+        "nyha_class": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "NYHA heart failure classification (I, II, III, IV)",
+          "title": "Nyha Class"
+        },
+        "blood_pressure_trend": {
+          "anyOf": [
+            {
+              "items": {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Historical BP readings [{date, systolic, diastolic}]",
+          "title": "Blood Pressure Trend"
+        },
+        "ecg_findings": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Key ECG findings",
+          "title": "Ecg Findings"
+        },
+        "medications": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Current cardiac medications",
+          "title": "Medications"
+        }
+      },
+      "title": "CardiologyData",
+      "type": "object"
+    },
+    "OncologyData": {
+      "description": "Oncology-specific patient data.\nNull if patient is not an oncology case.",
+      "properties": {
+        "tumor_size_trend": {
+          "description": "Historical tumor size measurements over time",
+          "items": {
+            "$ref": "#/$defs/TumorSizeMeasurement"
+          },
+          "title": "Tumor Size Trend",
+          "type": "array"
+        },
+        "tnm_staging": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "TNM staging classification (e.g., 'T2N0M0', 'T3N1M0')",
+          "title": "Tnm Staging"
+        },
+        "cancer_type": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Type of cancer (e.g., 'Breast Cancer', 'Lung Adenocarcinoma')",
+          "title": "Cancer Type"
+        },
+        "grade": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Tumor grade (e.g., 'Grade 2', 'Well-differentiated')",
+          "title": "Grade"
+        },
+        "biomarkers": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Relevant biomarkers (e.g., {'HER2': 'positive', 'ER': 'positive', 'PR': 'negative'})",
+          "title": "Biomarkers"
+        },
+        "treatment_response": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Response to current treatment (e.g., 'Partial Response', 'Stable Disease')",
+          "title": "Treatment Response"
+        }
+      },
+      "title": "OncologyData",
+      "type": "object"
+    },
+    "SpeechData": {
+      "description": "Speech/Audiology-specific patient data.\nNull if patient is not a speech/audiology case.",
+      "properties": {
+        "audiogram": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Audiogram"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Audiogram test results"
+        },
+        "speech_scores": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SpeechScores"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Speech recognition and threshold scores"
+        },
+        "hearing_loss_type": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Type of hearing loss (e.g., 'Sensorineural', 'Conductive', 'Mixed')",
+          "title": "Hearing Loss Type"
+        },
+        "hearing_loss_severity": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Severity classification (e.g., 'Mild', 'Moderate', 'Severe', 'Profound')",
+          "title": "Hearing Loss Severity"
+        },
+        "tinnitus": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Presence of tinnitus",
+          "title": "Tinnitus"
+        },
+        "balance_issues": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Presence of balance or vestibular issues",
+          "title": "Balance Issues"
+        },
+        "amplification": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Current amplification device (e.g., 'Hearing Aid', 'Cochlear Implant', 'None')",
+          "title": "Amplification"
+        }
+      },
+      "title": "SpeechData",
+      "type": "object"
+    },
+    "SpeechScores": {
+      "description": "Speech recognition and threshold scores.",
+      "properties": {
+        "srt_db": {
+          "anyOf": [
+            {
+              "maximum": 120,
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Speech Reception Threshold in dB",
+          "title": "Srt Db"
+        },
+        "wrs_percent": {
+          "anyOf": [
+            {
+              "maximum": 100,
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Word Recognition Score as percentage",
+          "title": "Wrs Percent"
+        },
+        "mcl_db": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Most Comfortable Loudness level in dB",
+          "title": "Mcl Db"
+        },
+        "ucl_db": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Uncomfortable Loudness level in dB",
+          "title": "Ucl Db"
+        }
+      },
+      "title": "SpeechScores",
+      "type": "object"
+    },
+    "TumorSizeMeasurement": {
+      "description": "Single tumor size measurement at a specific date.",
+      "properties": {
+        "date": {
+          "description": "Date of measurement (YYYY-MM-DD or YYYY-MM)",
+          "title": "Date",
+          "type": "string"
+        },
+        "size_cm": {
+          "description": "Tumor size in centimeters",
+          "minimum": 0,
+          "title": "Size Cm",
+          "type": "number"
+        },
+        "location": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Anatomical location if multiple tumors",
+          "title": "Location"
+        }
+      },
+      "required": [
+        "date",
+        "size_cm"
+      ],
+      "title": "TumorSizeMeasurement",
+      "type": "object"
+    },
+    "UniversalData": {
+      "description": "Core information present for every patient regardless of specialty.",
+      "properties": {
+        "evolution": {
+          "description": "High-level summary of patient's medical journey and progression",
+          "title": "Evolution",
+          "type": "string"
+        },
+        "current_status": {
+          "description": "List of current medical conditions, symptoms, or status points",
+          "items": {
+            "type": "string"
+          },
+          "title": "Current Status",
+          "type": "array"
+        },
+        "plan": {
+          "description": "List of next steps, treatments, or follow-up actions",
+          "items": {
+            "type": "string"
+          },
+          "title": "Plan",
+          "type": "array"
+        }
+      },
+      "required": [
+        "evolution"
+      ],
+      "title": "UniversalData",
+      "type": "object"
+    }
+  },
+  "description": "Complete AI response structure for patient summaries.\n\nThis is the top-level schema that the AI must return.\nFrontend can safely access any field knowing the structure is validated.\n\nUsage in backend:\n    validated_response = AIResponseSchema.model_validate(ai_output)\n    return validated_response.model_dump(exclude_none=True)",
+  "example": {
+    "cardiology": null,
+    "generated_at": "2024-12-01T14:30:00Z",
+    "oncology": {
+      "biomarkers": {
+        "ER": "positive",
+        "HER2": "negative",
+        "PR": "positive"
+      },
+      "cancer_type": "Invasive Ductal Carcinoma",
+      "grade": "Grade 2",
+      "tnm_staging": "T1N0M0",
+      "treatment_response": "Partial Response",
+      "tumor_size_trend": [
+        {
+          "date": "2024-01-15",
+          "size_cm": 2.3
+        },
+        {
+          "date": "2024-03-20",
+          "size_cm": 1.8
+        },
+        {
+          "date": "2024-06-10",
+          "size_cm": 1.2
+        }
+      ]
+    },
+    "patient_id": 123,
+    "specialty": "oncology",
+    "speech": null,
+    "universal": {
+      "current_status": [
+        "Post-lumpectomy, healing well",
+        "Cycle 3 of AC-T chemotherapy",
+        "Mild fatigue, manageable nausea"
+      ],
+      "evolution": "Patient diagnosed with early-stage breast cancer, currently undergoing adjuvant chemotherapy with good tolerance.",
+      "plan": [
+        "Complete remaining 3 cycles of chemotherapy",
+        "Schedule radiation oncology consult",
+        "Monitor CBC weekly",
+        "Follow-up appointment in 3 weeks"
+      ]
+    }
+  },
+  "properties": {
+    "universal": {
+      "$ref": "#/$defs/UniversalData",
+      "description": "Universal patient data (required for all patients)"
+    },
+    "oncology": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/OncologyData"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Oncology-specific data (null if not an oncology patient)"
+    },
+    "speech": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/SpeechData"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Speech/Audiology data (null if not a speech patient)"
+    },
+    "cardiology": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/CardiologyData"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Cardiology data (null if not a cardiology patient)"
+    },
+    "generated_at": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Timestamp when this summary was generated (ISO format)",
+      "title": "Generated At"
+    },
+    "patient_id": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Patient ID this summary belongs to",
+      "title": "Patient Id"
+    },
+    "specialty": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Primary specialty classification (e.g., 'oncology', 'speech', 'general')",
+      "title": "Specialty"
+    }
+  },
+  "required": [
+    "universal"
+  ],
+  "title": "AIResponseSchema",
+  "type": "object"
+}

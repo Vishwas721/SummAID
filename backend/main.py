@@ -2,7 +2,8 @@ import os
 import json
 import logging
 import unicodedata
-from typing import List, Optional, Tuple
+import asyncio
+from typing import List, Optional, Tuple, Dict, Any
 from datetime import datetime
 from fastapi import FastAPI, HTTPException, Body, Path, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -11,6 +12,8 @@ from database import get_db_connection
 import requests
 from pydantic import BaseModel, Field
 from routers.patient_router import router as patient_router
+from schemas import AIResponseSchema, UniversalData, OncologyData, SpeechData
+from parallel_prompts import _generate_structured_summary_parallel
 
 # Configure logging
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -762,8 +765,14 @@ async def summarize_patient(
         if not context_accum:
             raise HTTPException(status_code=404, detail=f"No chunks found for patient_id={patient_id}")
 
-        # 5. Generate summary using display label
-        summary_text = _generate_summary([t for _,_,t,_ in context_accum], label, system_prompt)
+        # 5. Generate summary using parallel prompt system for structured extraction
+        logger.info(f"Using parallel prompt system for patient {patient_id}")
+        summary_text = await _generate_structured_summary_parallel(
+            [t for _,_,t,_ in context_accum], 
+            label, 
+            patient_type,
+            LLM_MODEL_NAME
+        )
 
         # 6. Citations
         citations = []
