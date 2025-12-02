@@ -487,6 +487,23 @@ class SaveSummaryRequest(BaseModel):
     summary_text: str = Field(..., description="Edited summary text to persist as official version")
 
 
+class DoctorEditRequest(BaseModel):
+    """Request model for doctor editing a summary section"""
+    section: str = Field(..., description="Section to edit: 'medical_journey' or 'action_plan'")
+    content: str = Field(..., description="Updated content for the section")
+    edited_by: str = Field(..., description="Username/ID of the doctor making the edit")
+
+class DoctorSummaryResponse(BaseModel):
+    """Response model for merged doctor-edited summary"""
+    medical_journey: str = Field(..., description="Evolution/medical journey text (AI baseline or doctor edit)")
+    action_plan: str = Field(..., description="Current status + plan text (AI baseline or doctor edit)")
+    medical_journey_edited: bool = Field(False, description="Whether medical_journey has been edited by doctor")
+    action_plan_edited: bool = Field(False, description="Whether action_plan has been edited by doctor")
+    medical_journey_last_edited_at: Optional[str] = Field(None, description="Timestamp of last edit to medical_journey")
+    medical_journey_last_edited_by: Optional[str] = Field(None, description="Doctor who last edited medical_journey")
+    action_plan_last_edited_at: Optional[str] = Field(None, description="Timestamp of last edit to action_plan")
+    action_plan_last_edited_by: Optional[str] = Field(None, description="Doctor who last edited action_plan")
+
 class SummaryResponse(BaseModel):
     """Response model for /summarize endpoint using AIResponseSchema format"""
     universal: dict = Field(..., description="Universal data: evolution, current_status, plan")
@@ -1591,3 +1608,191 @@ async def safety_check(
     except Exception as e:
         logger.exception(f"❌ Error in safety check for patient {patient_id}")
         raise HTTPException(status_code=500, detail=f"Safety check error: {e}")
+
+
+@app.post("/patients/{patient_id}/summary/edit")
+async def edit_patient_summary(
+    patient_id: int = Path(..., description="Patient ID whose summary section to edit"),
+    payload: DoctorEditRequest = Body(...)
+):
+    """
+    Doctor edits a specific summary section (medical_journey or action_plan).
+    
+    Validates:
+    - Patient exists
+    - Section is 'medical_journey' or 'action_plan'
+    
+    Inserts new revision into doctor_summary_edits table (append-only).
+    Returns merged summary with latest edits.
+    """
+    logger.info(f"🩺 Doctor edit for patient_id={patient_id}, section={payload.section}")
+    
+    # Validate section
+    if payload.section not in ['medical_journey', 'action_plan']:
+        raise HTTPException(
+            status_code=400, 
+            detail=f"Invalid section '{payload.section}'. Must be 'medical_journey' or 'action_plan'"
+        )
+    
+    conn = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        
+        # Validate patient exists
+        cur.execute("SELECT patient_id FROM patients WHERE patient_id=%s", (patient_id,))
+        if not cur.fetchone():
+            raise HTTPException(status_code=404, detail=f"Patient {patient_id} not found")
+        
+        # Insert new edit revision (append-only)
+        cur.execute("""
+            INSERT INTO doctor_summary_edits (patient_id, section, content, edited_by, edited_at)
+            VALUES (%s, %s, %s, %s, NOW())
+            RETURNING edit_id, edited_at
+        """, (patient_id, payload.section, payload.content, payload.edited_by))
+        
+        edit_row = cur.fetchone()
+        edit_id = edit_row[0]
+        edited_at = edit_row[1]
+        
+        conn.commit()
+        logger.info(f"   ✅ Edit saved: edit_id={edit_id}, edited_at={edited_at}")
+        
+        # Return merged summary
+        cur.close()
+        conn.close()
+        
+        # Fetch merged summary using GET endpoint logic
+        merged_summary = await get_patient_summary(patient_id)
+        return {
+            "success": True,
+            "edit_id": edit_id,
+            "edited_at": edited_at.isoformat() if hasattr(edited_at, 'isoformat') else str(edited_at),
+            "summary": merged_summary
+        }
+        
+    except HTTPException:
+        if conn:
+            conn.rollback()
+        raise
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        logger.exception(f"❌ Error editing summary for patient {patient_id}")
+        raise HTTPException(status_code=500, detail=f"Edit error: {e}")
+    finally:
+        if conn:
+            conn.close()
+
+
+@app.get("/patients/{patient_id}/summary", response_model=DoctorSummaryResponse)
+async def get_patient_summary(
+    patient_id: int = Path(..., description="Patient ID to fetch merged summary for")
+):
+    """
+    Fetch merged summary for a patient.
+    
+    Merging logic:
+    1. Fetch AI-generated baseline from patient_summaries (universal.evolution, current_status, plan)
+    2. Fetch latest doctor edits for each section from doctor_summary_edits
+    3. Override AI baseline with doctor edits where they exist
+    4. Return combined summary with metadata about edits
+    """
+    logger.info(f"📄 Fetching merged summary for patient_id={patient_id}")
+    
+    conn = None
+    try:
+        ensure_summary_support()
+        conn = get_db_connection()
+        cur = conn.cursor()
+        
+        # Validate patient exists
+        cur.execute("SELECT patient_id FROM patients WHERE patient_id=%s", (patient_id,))
+        if not cur.fetchone():
+            raise HTTPException(status_code=404, detail=f"Patient {patient_id} not found")
+        
+        # 1. Fetch AI baseline summary
+        cur.execute("""
+            SELECT summary_text
+            FROM patient_summaries
+            WHERE patient_id=%s
+            ORDER BY generated_at DESC
+            LIMIT 1
+        """, (patient_id,))
+        
+        summary_row = cur.fetchone()
+        ai_summary = json.loads(summary_row[0]) if summary_row and summary_row[0] else None
+        
+        # Extract universal data
+        medical_journey_baseline = ""
+        action_plan_baseline = ""
+        
+        if ai_summary and "universal" in ai_summary:
+            universal = ai_summary["universal"]
+            medical_journey_baseline = universal.get("evolution", "")
+            
+            # Combine current_status and plan for action_plan
+            current_status = universal.get("current_status", "")
+            plan = universal.get("plan", "")
+            action_plan_baseline = f"{current_status}\n\n{plan}".strip()
+        
+        # 2. Fetch latest doctor edits for each section
+        cur.execute("""
+            SELECT DISTINCT ON (section) 
+                section, content, edited_at, edited_by
+            FROM doctor_summary_edits
+            WHERE patient_id=%s
+            ORDER BY section, edited_at DESC
+        """, (patient_id,))
+        
+        edits = cur.fetchall()
+        
+        # 3. Build merged response
+        medical_journey = medical_journey_baseline
+        action_plan = action_plan_baseline
+        medical_journey_edited = False
+        action_plan_edited = False
+        medical_journey_last_edited_at = None
+        medical_journey_last_edited_by = None
+        action_plan_last_edited_at = None
+        action_plan_last_edited_by = None
+        
+        for edit_row in edits:
+            section = edit_row[0]
+            content = edit_row[1]
+            edited_at = edit_row[2]
+            edited_by = edit_row[3]
+            
+            if section == "medical_journey":
+                medical_journey = content
+                medical_journey_edited = True
+                medical_journey_last_edited_at = edited_at.isoformat() if hasattr(edited_at, 'isoformat') else str(edited_at)
+                medical_journey_last_edited_by = edited_by
+            elif section == "action_plan":
+                action_plan = content
+                action_plan_edited = True
+                action_plan_last_edited_at = edited_at.isoformat() if hasattr(edited_at, 'isoformat') else str(edited_at)
+                action_plan_last_edited_by = edited_by
+        
+        cur.close()
+        conn.close()
+        
+        return DoctorSummaryResponse(
+            medical_journey=medical_journey,
+            action_plan=action_plan,
+            medical_journey_edited=medical_journey_edited,
+            action_plan_edited=action_plan_edited,
+            medical_journey_last_edited_at=medical_journey_last_edited_at,
+            medical_journey_last_edited_by=medical_journey_last_edited_by,
+            action_plan_last_edited_at=action_plan_last_edited_at,
+            action_plan_last_edited_by=action_plan_last_edited_by
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"❌ Error fetching summary for patient {patient_id}")
+        raise HTTPException(status_code=500, detail=f"Summary fetch error: {e}")
+    finally:
+        if conn:
+            conn.close()

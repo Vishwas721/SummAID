@@ -125,9 +125,66 @@ export function SummaryGrid({ patientId }) {
         console.log('❌ SummaryGrid: No summary_text in response');
       }
       
+      // Fetch doctor edits and merge with AI baseline
+      let mergedSummary = parsedSummary
+      if (userRole === 'DOCTOR' && parsedSummary) {
+        try {
+          const editUrl = `${import.meta.env.VITE_API_URL}/patients/${patientId}/summary`
+          console.log('🩺 Fetching doctor edits from:', editUrl)
+          const editResponse = await axios.get(editUrl)
+          const doctorEdits = editResponse.data
+          
+          console.log('🩺 Doctor edits fetched:', doctorEdits)
+          
+          // Merge doctor edits into the summary
+          if (mergedSummary && mergedSummary.universal) {
+            // Update evolution if doctor edited medical_journey
+            if (doctorEdits.medical_journey_edited) {
+              console.log('✏️ Applying doctor edit to medical_journey')
+              mergedSummary.universal.evolution = doctorEdits.medical_journey
+            }
+            
+            // Update current_status and plan if doctor edited action_plan
+            if (doctorEdits.action_plan_edited) {
+              console.log('✏️ Applying doctor edit to action_plan')
+              // Parse action_plan back into bullet points
+              const lines = doctorEdits.action_plan.split('\n').filter(l => l.trim())
+              let inStatus = false
+              let inPlan = false
+              const newStatus = []
+              const newPlan = []
+              
+              for (const line of lines) {
+                if (line.includes('Current Status:')) {
+                  inStatus = true
+                  inPlan = false
+                  continue
+                }
+                if (line.includes('Treatment Plan:')) {
+                  inStatus = false
+                  inPlan = true
+                  continue
+                }
+                
+                const cleanLine = line.replace(/^[•\-\*]\s*/, '').trim()
+                if (cleanLine) {
+                  if (inStatus) newStatus.push(cleanLine)
+                  else if (inPlan) newPlan.push(cleanLine)
+                }
+              }
+              
+              if (newStatus.length > 0) mergedSummary.universal.current_status = newStatus
+              if (newPlan.length > 0) mergedSummary.universal.plan = newPlan
+            }
+          }
+        } catch (editError) {
+          console.log('⚠️ Could not fetch doctor edits (might not exist yet):', editError.message)
+        }
+      }
+      
       console.log('💾 SummaryGrid: Setting summaryData state');
       setSummaryData({
-        ...parsedSummary,
+        ...mergedSummary,
         citations: Array.isArray(data.citations) ? data.citations : []
       })
       console.log('🎉 SummaryGrid: Summary data set successfully');
@@ -316,6 +373,12 @@ export function SummaryGrid({ patientId }) {
               .concat(!summaryData.citations.some(c => Array.isArray(c.sections) && c.sections.includes('evolution')) ? summaryData.citations : []))}
             onOpenCitation={openCitation}
             className="lg:col-span-2"
+            userRole={userRole}
+            patientId={patientId}
+            onSave={() => {
+              // Refresh entire summary to get merged doctor edits
+              fetchSummary()
+            }}
           />
 
           {/* Action Plan Card - Always present */}
@@ -325,6 +388,12 @@ export function SummaryGrid({ patientId }) {
             citations={(summaryData.citations.filter(c => Array.isArray(c.sections) && (c.sections.includes('recommendations') || c.sections.includes('key_findings')))
               .concat(!summaryData.citations.some(c => Array.isArray(c.sections) && (c.sections.includes('recommendations') || c.sections.includes('key_findings'))) ? summaryData.citations : []))}
             onOpenCitation={openCitation}
+            userRole={userRole}
+            patientId={patientId}
+            onSave={() => {
+              // Refresh entire summary to get merged doctor edits
+              fetchSummary()
+            }}
           />
 
           {/* Vital Trends Card - Universal, shown when data exists */}
