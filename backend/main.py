@@ -87,8 +87,8 @@ async def generate_parallel_summary(full_context: str, patient_label: str = "Pat
     
     This is a wrapper around _generate_structured_summary_parallel that:
     - Takes a single context string and splits it appropriately
-    - Returns a parsed Python dict instead of JSON string
-    - Matches the expected SummaryResponse schema
+    - Returns a parsed Python dict in AIResponseSchema format
+    - Includes universal, oncology, and speech sections
     
     Args:
         full_context: Concatenated medical report text
@@ -96,7 +96,7 @@ async def generate_parallel_summary(full_context: str, patient_label: str = "Pat
         patient_type: Type hint (oncology, speech, general)
         
     Returns:
-        Dictionary with keys: evolution, labs, key_findings, recommendations
+        Dictionary with AIResponseSchema structure: {universal, oncology, speech, specialty, generated_at}
     """
     # Split context into reasonable chunks (if very large)
     MAX_CHUNK_SIZE = 8000
@@ -119,19 +119,11 @@ async def generate_parallel_summary(full_context: str, patient_label: str = "Pat
         model=None  # Uses DEFAULT_MODEL from environment
     )
     
-    # Parse JSON response
+    # Parse JSON response - already in AIResponseSchema format
     summary_dict = json.loads(summary_json)
     
-    # Extract the 4 keys expected by SummaryResponse
-    # Map from AIResponseSchema structure to legacy 4-key format
-    universal = summary_dict.get('universal', {})
-    
-    return {
-        "evolution": universal.get('evolution', 'No evolution data available'),
-        "labs": universal.get('current_status', []),  # Map current_status to labs
-        "key_findings": universal.get('current_status', []),  # Duplicate for compatibility
-        "recommendations": universal.get('plan', [])
-    }
+    # Return the complete structured response with specialty data intact
+    return summary_dict
 
 # Configure logging
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -230,7 +222,11 @@ def _startup_init():
 # Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[FRONTEND_ORIGIN],  # Explicitly allow our React app's origin
+    allow_origins=[
+        FRONTEND_ORIGIN, 
+        "http://localhost:5173", 
+        "http://127.0.0.1:5173"
+    ],  # Explicitly allow common frontend origins
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -492,11 +488,12 @@ class SaveSummaryRequest(BaseModel):
 
 
 class SummaryResponse(BaseModel):
-    """Response model for /summarize endpoint matching the 4 keys from generate_parallel_summary"""
-    evolution: str = Field(..., description="Clinical evolution narrative")
-    labs: List[str] = Field(default_factory=list, description="Lab values and current status")
-    key_findings: List[str] = Field(default_factory=list, description="Key clinical findings")
-    recommendations: List[str] = Field(default_factory=list, description="Treatment plan and recommendations")
+    """Response model for /summarize endpoint using AIResponseSchema format"""
+    universal: dict = Field(..., description="Universal data: evolution, current_status, plan")
+    oncology: Optional[dict] = Field(None, description="Oncology-specific data")
+    speech: Optional[dict] = Field(None, description="Speech/audiology data")
+    specialty: Optional[str] = Field(None, description="Classified specialty")
+    generated_at: Optional[str] = Field(None, description="Generation timestamp")
     citations: List[dict] = Field(default_factory=list, description="Source citations with chunk IDs and report IDs")
 
 def _embed_text(text: str) -> List[float]:
@@ -740,7 +737,7 @@ def _normalize_text(s: str) -> str:
     s = '\n'.join(' '.join(line.split()) for line in s.split('\n'))
     return s.strip()
 
-@app.post("/summarize/{patient_id}", response_model=SummaryResponse)
+@app.post("/summarize/{patient_id}")
 async def summarize_patient(
     request: Request,
     patient_id: int = Path(..., description="The numeric patient_id to summarize"),
@@ -851,12 +848,14 @@ async def summarize_patient(
             patient_type=patient_type
         )
         
-        # 6. Build response matching SummaryResponse schema (4 keys + citations)
+        # 6. Build response with AIResponseSchema structure + citations
+        # summary_dict now contains: {universal, oncology, speech, specialty, generated_at}
         response_data = {
-            "evolution": summary_dict.get("evolution", "No evolution data available"),
-            "labs": summary_dict.get("labs", []),
-            "key_findings": summary_dict.get("key_findings", []),
-            "recommendations": summary_dict.get("recommendations", []),
+            "universal": summary_dict.get("universal", {}),
+            "oncology": summary_dict.get("oncology"),
+            "speech": summary_dict.get("speech"),
+            "specialty": summary_dict.get("specialty", "general"),
+            "generated_at": summary_dict.get("generated_at"),
             "citations": citations
         }
         
@@ -1313,7 +1312,11 @@ def save_summary(payload: SaveSummaryRequest):
 
 @app.get("/patients/doctor")
 async def get_doctor_patients():
-    """Return only patients whose chart has been prepared (summary exists)."""
+    """Return all patients with preparation status (summary exists or not).
+    
+    Patients with prepared charts show generated_at timestamp.
+    Patients without charts show prepared_at as null.
+    """
     conn = None
     try:
         ensure_summary_support()
@@ -1321,8 +1324,8 @@ async def get_doctor_patients():
         cur.execute("""
             SELECT p.patient_id, p.patient_display_name, ps.generated_at
             FROM patients p
-            JOIN patient_summaries ps ON ps.patient_id = p.patient_id
-            ORDER BY ps.generated_at DESC
+            LEFT JOIN patient_summaries ps ON ps.patient_id = p.patient_id
+            ORDER BY ps.generated_at DESC NULLS LAST, p.patient_display_name
         """)
         rows = cur.fetchall()
         cur.close(); conn.close()
@@ -1330,7 +1333,7 @@ async def get_doctor_patients():
             {
                 "patient_id": r[0],
                 "patient_display_name": r[1],
-                "prepared_at": r[2].isoformat() if hasattr(r[2], 'isoformat') else str(r[2])
+                "prepared_at": r[2].isoformat() if r[2] and hasattr(r[2], 'isoformat') else None
             } for r in rows
         ]
     except Exception as e:

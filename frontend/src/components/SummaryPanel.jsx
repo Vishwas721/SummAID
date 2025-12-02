@@ -17,6 +17,8 @@ pdfjs.GlobalWorkerOptions.workerSrc = new URL(
 ).toString()
 
 export function SummaryPanel({ patientId }) {
+  console.log('🎨 SummaryPanel RENDER - patientId prop:', patientId, 'Type:', typeof patientId);
+  
   const [summary, setSummary] = useState('')
   const [citations, setCitations] = useState([])
   const [generating, setGenerating] = useState(false)
@@ -29,6 +31,8 @@ export function SummaryPanel({ patientId }) {
   // Edit state for doctor to modify and save official summary
   const [editMode, setEditMode] = useState(false)
   const [editedText, setEditedText] = useState('')
+  
+  console.log('🔍 Current state: summary length:', summary.length, 'generating:', generating, 'error:', error, 'chartPrepared:', chartPrepared);
   
   // PDF Viewer State
   const [numPages, setNumPages] = useState(null)
@@ -61,41 +65,102 @@ export function SummaryPanel({ patientId }) {
     }).join('\n\n')
   }
 
+  const [debugInfo, setDebugInfo] = useState({ status: 'idle', url: '', error: null, response: null })
+
   useEffect(() => {
+    console.log('🚨🚨🚨 SummaryPanel: useEffect TRIGGERED');
+    console.log('🔑 patientId:', patientId, 'Type:', typeof patientId, 'Truthiness:', !!patientId);
+    console.log('👤 userRole:', userRole);
+    console.log('✅ Should fetch?', userRole === 'DOCTOR' && patientId);
+    
     setSummary('')
     setCitations([])
     setError(null)
     setChartPrepared(false)
     setChiefComplaint('')
+    setDebugInfo(prev => ({ ...prev, status: 'reset', error: null }))
     
     if (userRole === 'DOCTOR' && patientId) {
+      console.log('🚀🚀🚀 CALLING fetchPersistedSummary NOW');
       fetchPersistedSummary()
+      
+      // Poll for updates every 5 seconds
+      const pollInterval = setInterval(() => {
+        console.log('⏰ Poll interval triggered for patient:', patientId);
+        fetchPersistedSummary()
+      }, 5000)
+      
+      return () => {
+        console.log('🧹 Cleanup: clearing poll interval');
+        clearInterval(pollInterval)
+      }
+    } else {
+      console.log('❌ NOT fetching because userRole=' + userRole + ' patientId=' + patientId);
     }
   }, [patientId, userRole])
 
   const fetchPersistedSummary = async () => {
-    if (!patientId) return
+    console.log('🔥🔥🔥 fetchPersistedSummary CALLED');
+    console.log('🔑 Current patientId:', patientId, 'Type:', typeof patientId);
+    console.log('🌍 VITE_API_URL:', import.meta.env.VITE_API_URL);
+    
+    if (!patientId) {
+      console.log('❌❌❌ fetchPersistedSummary: No patientId provided - ABORTING')
+      return
+    }
+    
+    console.log('⚙️ Setting generating=true');
     setGenerating(true)
     setError(null)
     
+    const url = `${import.meta.env.VITE_API_URL}/summary/${encodeURIComponent(patientId)}?t=${Date.now()}`
+    console.log('🌐 Full URL constructed:', url);
+    setDebugInfo({ status: 'fetching', url, error: null, response: null })
+
     try {
-      const url = `${import.meta.env.VITE_API_URL}/summary/${encodeURIComponent(patientId)}`
+      console.log('📡 About to call axios.get...');
       const response = await axios.get(url)
+      console.log('✅✅✅ axios.get SUCCESS');
+      console.log('📦 Response status:', response.status);
+      console.log('📦 Response headers:', response.headers);
       const data = response.data || {}
+      console.log('📊 Response data:', data);
+      console.log('📝 summary_text length:', data.summary_text?.length || 0);
+      console.log('📎 citations count:', data.citations?.length || 0);
+      
+      console.log('💾 Setting state: summary');
       setSummary(data.summary_text || '')
+      console.log('💾 Setting state: editedText');
       setEditedText(data.summary_text || '')
+      console.log('💾 Setting state: citations');
       setCitations(Array.isArray(data.citations) ? data.citations : [])
+      console.log('💾 Setting state: chartPrepared');
       setChartPrepared(!!data.summary_text)
+      console.log('💾 Setting state: debugInfo');
+      setDebugInfo({ status: 'success', url, error: null, response: data })
+      console.log('🎉🎉🎉 Summary loaded successfully!');
     } catch (e) {
+      console.log('💥💥💥 AXIOS ERROR CAUGHT');
+      console.log('Error object:', e);
+      console.log('Error response:', e.response);
+      console.log('Error response status:', e.response?.status);
+      console.log('Error response data:', e.response?.data);
+      console.log('Error message:', e.message);
+      
+      const errorMsg = e.response?.data?.detail || e.message || 'Failed to load summary'
+      setDebugInfo({ status: 'error', url, error: errorMsg, response: e.response?.status })
+      
       if (e.response?.status === 404) {
+        console.log('⚠️⚠️⚠️ Summary not found (404) for patient:', patientId)
         setSummary('')
         setCitations([])
         setChartPrepared(false)
       } else {
-        console.error('Fetch summary error', e)
-        setError(e.response?.data?.detail || e.message || 'Failed to load summary')
+        console.error('❌❌❌ Fetch summary error for patient', patientId)
+        setError(errorMsg)
       }
     } finally {
+      console.log('🏁 fetchPersistedSummary COMPLETE - setting generating=false');
       setGenerating(false)
     }
   }
@@ -162,7 +227,10 @@ export function SummaryPanel({ patientId }) {
   }
 
   const handleGenerate = async () => {
-    if (!patientId) return
+    if (!patientId) {
+      console.log('❌ handleGenerate: No patientId provided')
+      return
+    }
     setGenerating(true)
     setError(null)
     setSummary('')
@@ -170,6 +238,8 @@ export function SummaryPanel({ patientId }) {
     
     try {
       const url = `${import.meta.env.VITE_API_URL}/summarize/${encodeURIComponent(patientId)}`
+      console.log('🚀 MA: Generating summary for patient:', patientId, 'URL:', url)
+      console.log('📝 Chief complaint:', chiefComplaint || '(none)')
       const response = await axios.post(url, {
         keywords: null,
         chief_complaint: chiefComplaint || null,
@@ -177,12 +247,15 @@ export function SummaryPanel({ patientId }) {
         max_context_chars: 16000
       })
       const data = response.data
+      console.log('✅ MA: Summary generated successfully')
+      console.log('📊 Response data:', data)
       setSummary(data.summary_text || '(No summary returned)')
       setEditedText(data.summary_text || '(No summary returned)')
       setCitations(Array.isArray(data.citations) ? data.citations : [])
       setChartPrepared(true)
     } catch (e) {
-      console.error('Generate summary error', e)
+      console.error('❌ MA: Generate summary error for patient', patientId, ':', e)
+      console.error('Error response:', e.response?.data)
       setError(e.response?.data?.detail || e.message || 'Unknown error')
       setChartPrepared(false)
     } finally {
@@ -327,6 +400,23 @@ export function SummaryPanel({ patientId }) {
     <div className={cn("h-full w-full grid", pdfPanel.open ? "grid-cols-[minmax(0,1fr)_minmax(420px,44vw)]" : "grid-cols-1") }>
       {/* Left: Summary content */}
       <div className="h-full w-full overflow-auto p-6">
+        {/* DEBUG OVERLAY - REMOVE IN PRODUCTION */}
+        <div className="mb-4 p-2 bg-slate-100 dark:bg-slate-800 border border-slate-300 text-xs font-mono text-slate-600 dark:text-slate-400 rounded">
+          <p><strong>DEBUG INFO:</strong></p>
+          <p>Patient ID: {String(patientId)} ({typeof patientId})</p>
+          <p>User Role: {userRole}</p>
+          <p>Fetch Status: {debugInfo?.status}</p>
+          <p>Fetch URL: {debugInfo?.url}</p>
+          <p>Fetch Error: {debugInfo?.error}</p>
+          <p>Response Code: {debugInfo?.response?.status || 'N/A'}</p>
+          <button 
+            onClick={fetchPersistedSummary}
+            className="mt-2 px-2 py-1 bg-red-500 text-white rounded hover:bg-red-600"
+          >
+            FORCE FETCH
+          </button>
+        </div>
+
         {error && (
           <div className="mb-4 p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg">
             <div className="flex items-start gap-2">
@@ -340,6 +430,24 @@ export function SummaryPanel({ patientId }) {
           <div className="flex items-center gap-3 p-4 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg">
             <Loader2 className="h-5 w-5 animate-spin text-blue-600 dark:text-blue-400" />
             <span className="text-sm text-blue-600 dark:text-blue-400">Loading prepared summary...</span>
+          </div>
+        )}
+
+        {!generating && !summary && patientId && (
+          <div className="flex flex-col items-center justify-center py-20">
+            <Sparkles className="h-16 w-16 text-slate-300 dark:text-slate-600 mb-4" />
+            <p className="text-sm text-slate-500 dark:text-slate-400 font-medium mb-2">No prepared summary yet</p>
+            <p className="text-xs text-slate-400 dark:text-slate-500 mb-4">
+              Waiting for MA to generate chart for Patient ID: {patientId}
+            </p>
+            <button
+              onClick={() => fetchPersistedSummary()}
+              disabled={generating}
+              className="px-4 py-2 bg-blue-500 text-white rounded-lg text-sm hover:bg-blue-600 disabled:opacity-50 flex items-center gap-2"
+            >
+              <Loader2 className={cn("h-4 w-4", generating && "animate-spin")} />
+              Check for Updates
+            </button>
           </div>
         )}
 
@@ -454,13 +562,7 @@ export function SummaryPanel({ patientId }) {
           </div>
         )}
 
-        {!generating && !summary && patientId && (
-          <div className="flex flex-col items-center justify-center py-20">
-            <Sparkles className="h-16 w-16 text-slate-300 dark:text-slate-600 mb-4" />
-            <p className="text-sm text-slate-500 dark:text-slate-400 font-medium">No prepared summary yet</p>
-            <p className="text-xs text-slate-400 dark:text-slate-500 mt-1">Waiting for MA to generate chart</p>
-          </div>
-        )}
+
 
         {/* Footnotes removed per UX request */}
 

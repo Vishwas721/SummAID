@@ -31,14 +31,14 @@ function App() {
   }, [])
 
   const handleSelectPatient = (patientId) => {
-    console.log('Selected patient:', patientId)
+    console.log('App: handleSelectPatient triggered. New ID:', patientId, 'Old ID:', selectedPatientId)
     setSelectedPatientId(patientId)
   }
 
   return (
     <div className="h-screen w-screen flex flex-col bg-gradient-to-br from-slate-100 via-blue-50 to-purple-50 dark:from-slate-950 dark:via-slate-900 dark:to-blue-950">
-      {/* Sticky Patient Header */}
-      <PatientHeader patientId={selectedPatientId} />
+      {/* Sticky Patient Header with search-driven selection */}
+      <PatientHeader patientId={selectedPatientId} onSelectPatient={handleSelectPatient} />
       {/* Below header: three column professional layout */}
       <div className="flex-1 grid grid-cols-[280px_minmax(0,1fr)_320px] gap-0 overflow-hidden">
         {/* Left Tools Sidebar */}

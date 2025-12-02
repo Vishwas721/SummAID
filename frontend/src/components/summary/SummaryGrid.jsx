@@ -30,10 +30,17 @@ export function SummaryGrid({ patientId }) {
   const [pdfError, setPdfError] = useState(null)
 
   useEffect(() => {
+    console.log('🚨🚨🚨 SummaryGrid: useEffect TRIGGERED');
+    console.log('🔑 patientId:', patientId, 'Type:', typeof patientId);
+    console.log('👤 userRole:', userRole);
+    console.log('✅ Should fetch?', patientId && userRole === 'DOCTOR');
+    
     if (patientId && userRole === 'DOCTOR') {
+      console.log('🚀 SummaryGrid: CALLING fetchSummary and fetchReports');
       fetchSummary()
       fetchReports()
     } else {
+      console.log('❌ SummaryGrid: NOT fetching - clearing data');
       setSummaryData(null)
       setReports([])
     }
@@ -78,21 +85,32 @@ export function SummaryGrid({ patientId }) {
   }
 
   const fetchSummary = async () => {
+    console.log('🔥🔥🔥 SummaryGrid.fetchSummary CALLED for patientId:', patientId);
+    console.log('🌐 VITE_API_URL:', import.meta.env.VITE_API_URL);
+    
     setLoading(true)
     setError(null)
     
     try {
       const url = `${import.meta.env.VITE_API_URL}/summary/${encodeURIComponent(patientId)}`
+      console.log('📡 SummaryGrid: Fetching from URL:', url);
+      
       const response = await axios.get(url)
+      console.log('✅✅✅ SummaryGrid: Response received, status:', response.status);
+      console.log('📦 SummaryGrid: Response data:', response.data);
+      
       const data = response.data || {}
       
-      // Parse structured JSON from summary_text
+      // Parse structured JSON from summary_text (now in AIResponseSchema format)
       let parsedSummary = null
       if (data.summary_text) {
+        console.log('📝 SummaryGrid: summary_text exists, length:', data.summary_text.length);
         try {
           parsedSummary = JSON.parse(data.summary_text)
+          console.log('✅ SummaryGrid: Successfully parsed AIResponseSchema:', parsedSummary);
+          console.log('📊 Structure check - universal:', !!parsedSummary.universal, 'oncology:', !!parsedSummary.oncology, 'speech:', !!parsedSummary.speech);
         } catch (e) {
-          console.error('Failed to parse summary JSON:', e)
+          console.error('❌ SummaryGrid: Failed to parse summary JSON:', e)
           // Fallback: treat as plain text
           parsedSummary = { 
             universal: {
@@ -101,21 +119,33 @@ export function SummaryGrid({ patientId }) {
               plan: []
             }
           }
+          console.log('⚠️ SummaryGrid: Using fallback plain text structure');
         }
+      } else {
+        console.log('❌ SummaryGrid: No summary_text in response');
       }
       
+      console.log('💾 SummaryGrid: Setting summaryData state');
       setSummaryData({
         ...parsedSummary,
         citations: Array.isArray(data.citations) ? data.citations : []
       })
+      console.log('🎉 SummaryGrid: Summary data set successfully');
     } catch (e) {
+      console.log('💥💥💥 SummaryGrid: CATCH BLOCK - Error occurred');
+      console.log('Error object:', e);
+      console.log('Error response:', e.response);
+      console.log('Error status:', e.response?.status);
+      
       if (e.response?.status === 404) {
+        console.log('⚠️ SummaryGrid: 404 Not Found - setting summaryData to null');
         setSummaryData(null)
       } else {
-        console.error('Fetch summary error:', e)
+        console.error('❌ SummaryGrid: Fetch summary error:', e)
         setError(e.response?.data?.detail || e.message || 'Failed to load summary')
       }
     } finally {
+      console.log('🏁 SummaryGrid: Finally block - setting loading=false');
       setLoading(false)
     }
   }
@@ -272,6 +302,13 @@ export function SummaryGrid({ patientId }) {
 
         {/* Card Grid */}
         <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
+          {/* DEBUG: Log summaryData structure */}
+          {console.log('📊 SummaryGrid RENDER - summaryData:', summaryData)}
+          {console.log('📊 Has universal?', !!summaryData.universal)}
+          {console.log('📊 Has oncology?', !!summaryData.oncology)}
+          {console.log('📊 Has speech?', !!summaryData.speech)}
+          {console.log('📊 Has vital_trends?', !!summaryData.universal?.vital_trends)}
+          
           {/* Evolution Card - Always present */}
           <EvolutionCard 
             evolution={summaryData.universal?.evolution} 
@@ -290,13 +327,13 @@ export function SummaryGrid({ patientId }) {
             onOpenCitation={openCitation}
           />
 
-          {/* Vital Trends Card - Universal, shown if data exists */}
+          {/* Vital Trends Card - Universal, shown when data exists */}
           <VitalTrendsCard 
-            vitalData={summaryData.universal?.vital_trends}
+            vitalData={summaryData.universal?.vital_trends || summaryData.vital_trends}
             className="lg:col-span-1"
           />
 
-          {/* Oncology Card - Conditional */}
+          {/* Oncology Card - Only show for oncology patients */}
           {summaryData.oncology && (
             <OncologyCard 
               oncologyData={summaryData.oncology}
@@ -307,7 +344,7 @@ export function SummaryGrid({ patientId }) {
             />
           )}
 
-          {/* Speech/Audiology Card - Conditional */}
+          {/* Speech/Audiology Card - Only show for speech/hearing patients */}
           {summaryData.speech && (
             <SpeechCard 
               speechData={summaryData.speech}

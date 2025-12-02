@@ -11,7 +11,7 @@ export function ToolsSidebar({ patientId }) {
   const [userRole] = useState(localStorage.getItem('user_role') || 'DOCTOR')
 
   // Active tab
-  const [activeTab, setActiveTab] = useState('chat')
+  const [activeTab, setActiveTab] = useState('summary')
 
   // Chat
   const [chatInput, setChatInput] = useState('')
@@ -37,18 +37,27 @@ export function ToolsSidebar({ patientId }) {
 
   useEffect(() => {
     if (transcript && transcript !== lastProcessedTranscriptRef.current) {
+      console.log('ToolsSidebar: New transcript:', transcript)
       const newText = transcript.substring(lastProcessedTranscriptRef.current.length)
-      if (newText) setChatInput((p) => p + newText)
+      if (newText) {
+        console.log('ToolsSidebar: Appending to input:', newText)
+        setChatInput((p) => p + newText)
+      }
       lastProcessedTranscriptRef.current = transcript
     }
   }, [transcript])
 
   useEffect(() => {
-    if (!isListening) {
-      lastProcessedTranscriptRef.current = ''
-      resetTranscript()
+    if (!isListening && transcript) {
+      // When listening stops, ensure we process any remaining transcript
+      console.log('ToolsSidebar: Stopped listening, processing final transcript')
+      if (transcript !== lastProcessedTranscriptRef.current) {
+         const newText = transcript.substring(lastProcessedTranscriptRef.current.length)
+         if (newText) setChatInput((p) => p + newText)
+         lastProcessedTranscriptRef.current = transcript
+      }
     }
-  }, [isListening, resetTranscript])
+  }, [isListening, transcript])
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'auto', block: 'end' })
@@ -62,6 +71,7 @@ export function ToolsSidebar({ patientId }) {
     if (!patientId || !chatInput.trim() || chatLoading) return
     if (isListening) stopListening()
     resetTranscript()
+    lastProcessedTranscriptRef.current = ''
 
     const text = chatInput.trim()
     setChatInput('')
@@ -282,7 +292,7 @@ export function ToolsSidebar({ patientId }) {
               {speechError && <div className="mb-2 p-2 bg-red-50 text-red-700 text-xs rounded">{speechError}</div>}
               <div className="flex gap-2">
                 <input type="text" value={chatInput} onChange={(e)=>setChatInput(e.target.value)} onKeyDown={(e)=>{ if (e.key==='Enter' && !chatLoading) handleSendMessage() }} placeholder="Ask about patient..." disabled={!patientId || chatLoading} className="flex-1 px-3 py-2 rounded-lg border bg-white dark:bg-slate-700" />
-                <button onMouseDown={startListening} onMouseUp={stopListening} onMouseLeave={stopListening} onTouchStart={startListening} onTouchEnd={stopListening} disabled={!patientId || chatLoading || !isSupported} className={cn('px-3 py-2 rounded-lg', isListening ? 'bg-red-500 text-white' : 'bg-slate-200') } title={isSupported ? 'Hold to record' : 'Not supported'}><Mic className="h-4 w-4"/></button>
+                <button onMouseDown={() => { resetTranscript(); lastProcessedTranscriptRef.current = ''; startListening() }} onMouseUp={stopListening} onMouseLeave={stopListening} onTouchStart={() => { resetTranscript(); lastProcessedTranscriptRef.current = ''; startListening() }} onTouchEnd={stopListening} disabled={!patientId || chatLoading || !isSupported} className={cn('px-3 py-2 rounded-lg', isListening ? 'bg-red-500 text-white' : 'bg-slate-200') } title={isSupported ? 'Hold to record' : 'Not supported'}><Mic className="h-4 w-4"/></button>
                 <button onClick={handleSendMessage} disabled={!patientId || !chatInput.trim() || chatLoading} className="px-4 py-2 bg-blue-500 text-white rounded-lg"><Send className="h-4 w-4"/></button>
               </div>
             </div>
