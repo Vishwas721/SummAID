@@ -255,12 +255,44 @@ def main():
                 sex = "M"
             elif token_first in female_names:
                 sex = "F"
-            # Hash-based age (ensure pediatric diversity): map first byte to 4-80
-            hval = int(hashlib.sha256(display_name.encode()).hexdigest()[:2], 16)  # 0-255
-            age = 4 + (hval % 77)  # 4..80
-            # Bias: if name contains pediatric hint, force age < 16
-            if any(k in lower_name for k in ["child", "peds", "pediatric", "kid"]):
-                age = 8
+            # Extract age from first report's text if available
+            age = None
+            for file_path in report_files:
+                try:
+                    pages_text = extract_text_from_pdf(file_path)
+                    if pages_text:
+                        full_text = "\n\n".join(text for text, _ in pages_text)
+                        # Look for age patterns: "62 years old", "(62 years old)", "Age: 62"
+                        import re
+                        age_patterns = [
+                            r'(\d+)\s+years?\s+old',
+                            r'\((\d+)\s+years?\s+old\)',
+                            r'Age:\s*(\d+)',
+                            r'age:\s*(\d+)',
+                            r'AGE:\s*(\d+)',
+                        ]
+                        for pattern in age_patterns:
+                            match = re.search(pattern, full_text, re.IGNORECASE)
+                            if match:
+                                extracted_age = int(match.group(1))
+                                if 0 <= extracted_age <= 120:  # Sanity check
+                                    age = extracted_age
+                                    print(f"    Extracted age {age} from {os.path.basename(file_path)}")
+                                    break
+                        if age is not None:
+                            break
+                except Exception as e:
+                    print(f"    Could not extract age from {os.path.basename(file_path)}: {e}")
+            
+            # Fallback: Hash-based age if not found in reports
+            if age is None:
+                hval = int(hashlib.sha256(display_name.encode()).hexdigest()[:2], 16)  # 0-255
+                age = 4 + (hval % 77)  # 4..80
+                # Bias: if name contains pediatric hint, force age < 16
+                if any(k in lower_name for k in ["child", "peds", "pediatric", "kid"]):
+                    age = 8
+                print(f"    Using fallback hash-based age: {age}")
+            
             # Insert patient with age & sex
             cur.execute("""
                 INSERT INTO patients (patient_demo_id, patient_display_name, age, sex)

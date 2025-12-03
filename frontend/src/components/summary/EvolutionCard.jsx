@@ -1,5 +1,5 @@
-import { useState } from 'react'
-import { BookOpen, Edit2, Save, X } from 'lucide-react'
+import { useMemo, useState } from 'react'
+import { BookOpen, Edit2, Save, X, Clock, FileText } from 'lucide-react'
 import { cn } from '../../lib/utils'
 
 /**
@@ -21,6 +21,41 @@ export function EvolutionCard({
   const [editedContent, setEditedContent] = useState(evolution || '')
   const [isSaving, setIsSaving] = useState(false)
   const [saveSuccess, setSaveSuccess] = useState(false)
+  const [viewMode, setViewMode] = useState('timeline') // 'timeline' | 'narrative' | 'points'
+  const [highlight, setHighlight] = useState(true)
+
+  // Lightweight client-side parsing for a more interactive view
+  const parsedEvents = useMemo(() => {
+    if (!evolution) return []
+    const text = evolution
+    const sentences = text.split(/\n+|(?<=[.!?])\s+/).map(s => s.trim()).filter(Boolean)
+    const dateRegexes = [
+      /\b(\d{4})[-\/.](\d{1,2})[-\/.](\d{1,2})\b/, // 2025-12-01
+      /\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)[a-z]*\s+\d{1,2}(?:,\s*\d{4})?\b/i, // Dec 1, 2025
+      /\b\d{1,2}\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)[a-z]*(?:\s+\d{4})?\b/i // 1 Dec 2025
+    ]
+    const keywords = [
+      { key: 'diagnos', label: 'Diagnosis', color: 'bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-300' },
+      { key: 'admit', label: 'Admission', color: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300' },
+      { key: 'discharg', label: 'Discharge', color: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300' },
+      { key: 'surg', label: 'Surgery', color: 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-300' },
+      { key: 'chem', label: 'Chemo', color: 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300' },
+      { key: 'radiat', label: 'Radiation', color: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300' },
+      { key: 'medicat', label: 'Medication', color: 'bg-cyan-100 text-cyan-700 dark:bg-cyan-900/30 dark:text-cyan-300' },
+      { key: 'allerg', label: 'Allergy', color: 'bg-pink-100 text-pink-700 dark:bg-pink-900/30 dark:text-pink-300' },
+      { key: 'follow', label: 'Follow-up', color: 'bg-slate-100 text-slate-700 dark:bg-slate-900/30 dark:text-slate-300' },
+    ]
+    const events = sentences.map((s, idx) => {
+      const dateMatch = dateRegexes.find(r => r.test(s))
+      const dateText = dateMatch ? (s.match(dateMatch) || [])[0] : null
+      const tags = keywords.filter(k => s.toLowerCase().includes(k.key)).map(k => ({ label: k.label, color: k.color }))
+      return { id: idx, sentence: s, dateText, tags }
+    })
+    // Heuristic: stable order but prefer dated sentences first
+    const withDate = events.filter(e => e.dateText)
+    const withoutDate = events.filter(e => !e.dateText)
+    return [...withDate, ...withoutDate]
+  }, [evolution])
 
   const handleEdit = () => {
     setEditedContent(evolution || '')
@@ -90,9 +125,40 @@ export function EvolutionCard({
           </div>
         </div>
         
-        {/* Edit/Save/Cancel Buttons */}
-        {canEdit && (
-          <div className="flex items-center gap-2">
+        {/* View mode + Edit controls */}
+        <div className="flex items-center gap-2">
+          {/* Toggle narrative/timeline */}
+          <div className="flex items-center rounded-lg border border-slate-300 dark:border-slate-600 overflow-hidden">
+            <button
+              onClick={() => setViewMode('timeline')}
+              className={cn('px-2 py-1 text-xs flex items-center gap-1', viewMode==='timeline' ? 'bg-slate-200 dark:bg-slate-700 text-slate-900 dark:text-slate-100' : 'text-slate-600 dark:text-slate-400')}
+              title="Timeline view"
+            >
+              <Clock className="h-3.5 w-3.5" /> Timeline
+            </button>
+            <button
+              onClick={() => setViewMode('narrative')}
+              className={cn('px-2 py-1 text-xs flex items-center gap-1 border-l border-slate-300 dark:border-slate-600', viewMode==='narrative' ? 'bg-slate-200 dark:bg-slate-700 text-slate-900 dark:text-slate-100' : 'text-slate-600 dark:text-slate-400')}
+              title="Narrative view"
+            >
+              <FileText className="h-3.5 w-3.5" /> Narrative
+            </button>
+            <button
+              onClick={() => setViewMode('points')}
+              className={cn('px-2 py-1 text-xs flex items-center gap-1 border-l border-slate-300 dark:border-slate-600', viewMode==='points' ? 'bg-slate-200 dark:bg-slate-700 text-slate-900 dark:text-slate-100' : 'text-slate-600 dark:text-slate-400')}
+              title="Point-wise view"
+            >
+              • Points
+            </button>
+          </div>
+          {/* Highlight toggle */}
+          <label className="ml-2 flex items-center gap-1 text-xs text-slate-600 dark:text-slate-400">
+            <input type="checkbox" checked={highlight} onChange={(e)=>setHighlight(e.target.checked)} />
+            Highlight
+          </label>
+
+          {canEdit && (
+          <div className="flex items-center gap-2 ml-2">
             {saveSuccess && (
               <span className="text-xs text-green-600 dark:text-green-400 font-medium">
                 Saved ✓
@@ -127,7 +193,8 @@ export function EvolutionCard({
               </button>
             )}
           </div>
-        )}
+          )}
+        </div>
       </div>
 
       {/* Content */}
@@ -140,9 +207,81 @@ export function EvolutionCard({
             placeholder="Enter medical journey text..."
           />
         ) : evolution ? (
-          <p className="text-sm leading-relaxed text-slate-700 dark:text-slate-300 whitespace-pre-wrap">
-            {evolution}
-          </p>
+          viewMode === 'timeline' ? (
+            <ul className="space-y-3">
+              {parsedEvents.map(ev => (
+                <li key={ev.id} className="flex items-start gap-3">
+                  <div className="mt-1 h-2 w-2 rounded-full bg-indigo-500"></div>
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2 mb-1">
+                      {ev.dateText && (
+                        <span className="px-2 py-0.5 rounded-md bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300 text-xs font-medium">
+                          {ev.dateText}
+                        </span>
+                      )}
+                      {ev.tags.slice(0,3).map((t, i) => (
+                        <span key={i} className={cn('px-2 py-0.5 rounded-md text-xs font-medium', t.color)}>{t.label}</span>
+                      ))}
+                    </div>
+                    <p className="text-sm leading-relaxed text-slate-700 dark:text-slate-300">
+                      {highlight ? (
+                        <span dangerouslySetInnerHTML={{
+                          __html: ev.sentence
+                            .replace(/(diagnos\w+)/ig, '<strong>$1</strong>')
+                            .replace(/(surg\w+)/ig, '<strong>$1</strong>')
+                            .replace(/(chem\w+)/ig, '<strong>$1</strong>')
+                            .replace(/(radiat\w+)/ig, '<strong>$1</strong>')
+                            .replace(/(medicat\w+|drug|therapy)/ig, '<strong>$1</strong>')
+                            .replace(/(allerg\w+)/ig, '<mark class=\"bg-pink-200 dark:bg-pink-900/40\">$1</mark>')
+                        }} />
+                      ) : ev.sentence}
+                    </p>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          ) : viewMode === 'points' ? (
+            <ul className="space-y-2">
+              {parsedEvents.map(ev => (
+                <li key={ev.id} className="flex items-start gap-2">
+                  <span className="mt-1 h-1.5 w-1.5 rounded-full bg-slate-500 dark:bg-slate-400"></span>
+                  <span className="text-sm leading-relaxed text-slate-700 dark:text-slate-300">
+                    {highlight ? (
+                      <span dangerouslySetInnerHTML={{
+                        __html: ev.sentence
+                          .replace(/\b(Mr\.|Mrs\.|Ms\.|Dr\.)\s+[A-Z][a-z]+\b/g, '') // drop names
+                          .replace(/\b\d{1,2}\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)[a-z]*(?:\s+\d{4})?\b/ig, '') // drop dates
+                          .replace(/\b(\d{4})[-\/.](\d{1,2})[-\/.](\d{1,2})\b/g, '')
+                          .replace(/^(\s*[-•]\s*)/, '')
+                          .replace(/(diagnos\w+)/ig, '<strong>$1</strong>')
+                          .replace(/(surg\w+)/ig, '<strong>$1</strong>')
+                          .replace(/(chem\w+)/ig, '<strong>$1</strong>')
+                          .replace(/(radiat\w+)/ig, '<strong>$1</strong>')
+                          .replace(/(medicat\w+|drug|therapy)/ig, '<strong>$1</strong>')
+                          .replace(/(allerg\w+)/ig, '<mark class=\"bg-pink-200 dark:bg-pink-900/40\">$1</mark>')
+                      }} />
+                    ) : (
+                      ev.sentence
+                    )}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="text-sm leading-relaxed text-slate-700 dark:text-slate-300 whitespace-pre-wrap">
+              {highlight ? (
+                <span dangerouslySetInnerHTML={{
+                  __html: (evolution || '')
+                    .replace(/(diagnos\w+)/ig, '<strong>$1</strong>')
+                    .replace(/(surg\w+)/ig, '<strong>$1</strong>')
+                    .replace(/(chem\w+)/ig, '<strong>$1</strong>')
+                    .replace(/(radiat\w+)/ig, '<strong>$1</strong>')
+                    .replace(/(medicat\w+|drug|therapy)/ig, '<strong>$1</strong>')
+                    .replace(/(allerg\w+)/ig, '<mark class=\"bg-pink-200 dark:bg-pink-900/40\">$1</mark>')
+                }} />
+              ) : evolution}
+            </p>
+          )
         ) : (
           <p className="text-sm text-slate-400 dark:text-slate-500 italic">
             No evolution data available

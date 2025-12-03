@@ -112,7 +112,14 @@ export function PatientHeader({ patientId, onSelectPatient }) {
                     <div className='flex items-center gap-2'>
                       <span className='text-xs text-slate-500'>ID {p.patient_id}</span>
                       {p.age != null && p.sex && (
-                        <span className='text-xs text-slate-500'>{p.age}{p.sex}</span>
+                        <div className='flex items-center gap-1'>
+                          <span className='px-2 py-0.5 rounded-md bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 text-xs font-medium'>
+                            {p.age} years
+                          </span>
+                          <span className='px-2 py-0.5 rounded-md bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 text-xs font-medium'>
+                            {p.sex === 'M' ? 'Male' : p.sex === 'F' ? 'Female' : p.sex}
+                          </span>
+                        </div>
                       )}
                     </div>
                   </div>
@@ -129,11 +136,33 @@ export function PatientHeader({ patientId, onSelectPatient }) {
         
         {/* Selected Patient Badge */}
         {patient && (
-          <div className='flex items-center gap-2 px-4 py-2 rounded-lg bg-gradient-to-r from-blue-50 to-purple-50 dark:from-blue-900/20 dark:to-purple-900/20 border border-blue-200 dark:border-blue-800'>
-            <span className='text-sm font-medium text-slate-700 dark:text-slate-300'>{patient.patient_display_name}</span>
-            <span className='px-2 py-0.5 rounded-full bg-blue-500 text-white text-xs'>{patient.patient_id}</span>
+          <div className='flex items-center gap-3 px-4 py-2.5 rounded-lg bg-gradient-to-r from-blue-50 to-purple-50 dark:from-blue-900/20 dark:to-purple-900/20 border border-blue-200 dark:border-blue-800 shadow-sm'>
+            <div className='flex items-center gap-2'>
+              <UserCircle className='h-5 w-5 text-blue-600 dark:text-blue-400' />
+              <span className='text-sm font-bold text-slate-800 dark:text-slate-200'>{patient.patient_display_name}</span>
+            </div>
+            <div className='h-5 w-px bg-slate-300 dark:bg-slate-600'></div>
+            <span className='px-2.5 py-1 rounded-md bg-blue-600 text-white text-xs font-semibold shadow-sm'>
+              ID: {patient.patient_id}
+            </span>
             {patient.age != null && patient.sex && (
-              <span className='px-2 py-0.5 rounded-full bg-purple-500 text-white text-xs'>{patient.age}{patient.sex}</span>
+              <>
+                <span className='px-2.5 py-1 rounded-md bg-gradient-to-r from-emerald-500 to-teal-500 text-white text-xs font-semibold shadow-sm flex items-center gap-1'>
+                  <svg className='h-3.5 w-3.5' fill='none' viewBox='0 0 24 24' stroke='currentColor'>
+                    <path strokeLinecap='round' strokeLinejoin='round' strokeWidth={2} d='M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z' />
+                  </svg>
+                  {patient.age} years old
+                </span>
+                <span className={cn(
+                  'px-2.5 py-1 rounded-md text-white text-xs font-semibold shadow-sm flex items-center gap-1',
+                  patient.sex === 'M' ? 'bg-gradient-to-r from-blue-500 to-indigo-500' : 'bg-gradient-to-r from-pink-500 to-rose-500'
+                )}>
+                  <svg className='h-3.5 w-3.5' fill='none' viewBox='0 0 24 24' stroke='currentColor'>
+                    <path strokeLinecap='round' strokeLinejoin='round' strokeWidth={2} d='M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z' />
+                  </svg>
+                  {patient.sex === 'M' ? 'Male' : patient.sex === 'F' ? 'Female' : patient.sex}
+                </span>
+              </>
             )}
           </div>
         )}

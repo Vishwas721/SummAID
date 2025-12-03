@@ -1045,6 +1045,29 @@ async def chat_with_patient(
             sig = txt[:200]
             if sig in seen: continue
             seen.add(sig); merged.append((cid,rid,txt,meta))
+
+        # 5. Inject latest doctor edits as high-priority synthetic context
+        try:
+            conn2 = get_db_connection(); cur2 = conn2.cursor()
+            cur2.execute(
+                """
+                SELECT DISTINCT ON (section)
+                       section, content, edited_at
+                FROM doctor_summary_edits
+                WHERE patient_id=%s
+                ORDER BY section, edited_at DESC
+                """,
+                (patient_id,)
+            )
+            for section, content, edited_at in cur2.fetchall() or []:
+                if content:
+                    meta = {"source": "Doctor Edit", "section": section, "edited_at": edited_at.isoformat() if hasattr(edited_at,'isoformat') else str(edited_at)}
+                    # Prepend to merged to give highest priority
+                    merged.insert(0, (-100 if section=='medical_journey' else -101, None, content, meta))
+            cur2.close(); conn2.close()
+        except Exception as _e:
+            # Non-fatal: if edits not available, proceed
+            pass
         
         context_accum: List[Tuple[int,int,str,dict]] = []
         total_chars = 0
@@ -1339,7 +1362,7 @@ async def get_doctor_patients():
         ensure_summary_support()
         conn = get_db_connection(); cur = conn.cursor()
         cur.execute("""
-            SELECT p.patient_id, p.patient_display_name, ps.generated_at
+            SELECT p.patient_id, p.patient_display_name, ps.generated_at, p.age, p.sex
             FROM patients p
             LEFT JOIN patient_summaries ps ON ps.patient_id = p.patient_id
             ORDER BY ps.generated_at DESC NULLS LAST, p.patient_display_name
@@ -1350,7 +1373,9 @@ async def get_doctor_patients():
             {
                 "patient_id": r[0],
                 "patient_display_name": r[1],
-                "prepared_at": r[2].isoformat() if r[2] and hasattr(r[2], 'isoformat') else None
+                "prepared_at": r[2].isoformat() if r[2] and hasattr(r[2], 'isoformat') else None,
+                "age": r[3],
+                "sex": r[4]
             } for r in rows
         ]
     except Exception as e:
@@ -1398,14 +1423,35 @@ async def safety_check(
         report_ids = [r[0] for r in report_rows]
         logger.info(f"   Found {len(report_ids)} reports: {report_ids}")
         
-        # Fetch latest summary text
-        logger.info(f"   Fetching summary for patient_id={patient_id}")
+        # Fetch latest AI summary text
+        logger.info(f"   Fetching AI summary for patient_id={patient_id}")
         cur.execute("SELECT summary_text FROM patient_summaries WHERE patient_id=%s ORDER BY generated_at DESC LIMIT 1", (patient_id,))
         summary_row = cur.fetchone()
         summary_text = summary_row[0] if summary_row else ""
-        logger.info(f"   Summary found: {bool(summary_text)} (length: {len(summary_text) if summary_text else 0})")
+        logger.info(f"   AI summary found: {bool(summary_text)} (length: {len(summary_text) if summary_text else 0})")
 
-        if not report_ids and not summary_text:
+        # Fetch latest doctor edits (merged view) for medical_journey and action_plan
+        logger.info(f"   Fetching doctor edits for patient_id={patient_id}")
+        cur.execute(
+            """
+            SELECT DISTINCT ON (section)
+                   section, content, edited_at, edited_by
+            FROM doctor_summary_edits
+            WHERE patient_id=%s
+            ORDER BY section, edited_at DESC
+            """,
+            (patient_id,)
+        )
+        edits_rows = cur.fetchall() or []
+        edited_medical_journey = None
+        edited_action_plan = None
+        for erow in edits_rows:
+            if erow[0] == 'medical_journey':
+                edited_medical_journey = erow[1]
+            elif erow[0] == 'action_plan':
+                edited_action_plan = erow[1]
+
+        if not report_ids and not summary_text and not edited_medical_journey and not edited_action_plan:
             logger.info(f"   ✅ No reports or summary - returning safe")
             cur.close()
             conn.close()
@@ -1490,7 +1536,7 @@ async def safety_check(
         )
         annotation_rows = cur.fetchall()
         
-        # 4. Combine and deduplicate chunks
+        # 4. Combine and deduplicate chunks, and include doctor edits as synthetic chunks
         seen_chunk_ids = set()
         all_chunks = []
         for chunk_tuple in (keyword_chunks + similarity_chunks):
@@ -1498,6 +1544,12 @@ async def safety_check(
             if chunk_id not in seen_chunk_ids:
                 seen_chunk_ids.add(chunk_id)
                 all_chunks.append(chunk_tuple)
+
+        # Add doctor edits as synthetic chunks to be analyzed
+        if edited_medical_journey:
+            all_chunks.append((-1, None, edited_medical_journey, {"source": "Doctor Edit", "section": "medical_journey"}))
+        if edited_action_plan:
+            all_chunks.append((-2, None, edited_action_plan, {"source": "Doctor Edit", "section": "action_plan"}))
         
         cur.close()
         conn.close()
@@ -1518,7 +1570,7 @@ async def safety_check(
         allergy_details_parts = []
         citations = []
 
-        # 5x. Check summary text
+        # 5x. Check AI summary text
         if summary_text:
             summary_lower = summary_text.lower()
             if drug_lower in summary_lower:
@@ -1537,6 +1589,26 @@ async def safety_check(
                             "date": "Current"
                         })
                         break # Found it in summary
+
+        # 5y. Check doctor edits explicitly
+        for section_name, edited_text in (("medical_journey", edited_medical_journey), ("action_plan", edited_action_plan)):
+            if edited_text:
+                edited_lower = edited_text.lower()
+                if drug_lower in edited_lower:
+                    lines = edited_text.split('\n')
+                    for line in lines:
+                        ll = line.lower()
+                        if drug_lower in ll and any(kw in ll for kw in allergy_keywords):
+                            has_allergy = True
+                            warnings.append(f"⚠️ Doctor-edited {section_name.replace('_', ' ')} mentions {drug_name} allergy")
+                            allergy_details_parts.append(line.strip())
+                            citations.append({
+                                "source": "Doctor Edit",
+                                "section": section_name,
+                                "text": line.strip(),
+                                "date": "Current"
+                            })
+                            break
 
         
         # 5a. Check annotations first (most recent clinical notes)

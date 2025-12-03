@@ -397,66 +397,152 @@ export function PatientChartView({ patientId }) {
 
     const doc = new jsPDF()
     const margin = 20
+    const pageWidth = doc.internal.pageSize.getWidth()
+    const pageHeight = doc.internal.pageSize.getHeight()
     let y = margin
 
-    // Header
-    doc.setFontSize(18)
-    doc.setFont(undefined, 'bold')
-    doc.text('PRESCRIPTION', 105, y, { align: 'center' })
-    y += 15
+    // Draw colored header background with gradient effect (simulate with multiple rects)
+    doc.setFillColor(59, 130, 246) // Blue-500
+    doc.rect(0, 0, pageWidth, 40, 'F')
+    doc.setFillColor(37, 99, 235) // Blue-600
+    doc.rect(0, 30, pageWidth, 10, 'F')
 
-    // Patient info
-    doc.setFontSize(11)
-    doc.setFont(undefined, 'normal')
-    doc.text(`Patient: ${reports[0]?.patient_name || 'Unknown'}`, margin, y)
-    y += 7
-    doc.text(`Date: ${new Date().toLocaleDateString()}`, margin, y)
-    y += 15
-
-    // Rx symbol
+    // Medical cross symbol in header
     doc.setFontSize(24)
+    doc.setTextColor(255, 255, 255)
+    doc.text('✚', margin, 25)
+
+    // Header title
+    doc.setFontSize(22)
     doc.setFont(undefined, 'bold')
-    doc.text('Rx', margin, y)
-    y += 15
+    doc.setTextColor(255, 255, 255)
+    doc.text('MEDICAL PRESCRIPTION', pageWidth / 2, 27, { align: 'center' })
+    y = 55
 
-    // Prescription details
-    doc.setFontSize(12)
+    // Patient info section with colored background
+    doc.setFillColor(241, 245, 249) // Slate-100
+    doc.roundedRect(margin - 5, y - 5, pageWidth - 2 * margin + 10, 25, 3, 3, 'F')
+    
+    doc.setTextColor(30, 41, 59) // Slate-800
+    doc.setFontSize(11)
+    doc.setFont(undefined, 'bold')
+    doc.text('Patient:', margin, y)
     doc.setFont(undefined, 'normal')
-    doc.text(`Drug: ${drugName}`, margin + 10, y)
-    y += 8
+    doc.text(`${reports[0]?.patient_name || 'Unknown'}`, margin + 30, y)
+    
+    y += 7
+    doc.setFont(undefined, 'bold')
+    doc.text('Date:', margin, y)
+    doc.setFont(undefined, 'normal')
+    doc.text(`${new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}`, margin + 30, y)
+    
+    y += 7
+    doc.setFont(undefined, 'bold')
+    doc.text('System:', margin, y)
+    doc.setFont(undefined, 'normal')
+    doc.setTextColor(59, 130, 246) // Blue-500
+    doc.text('SummAID', margin + 30, y)
+    
+    y += 20
+
+    // Rx symbol with colored circle background
+    doc.setFillColor(16, 185, 129) // Emerald-500
+    doc.circle(margin + 12, y + 5, 12, 'F')
+    doc.setFontSize(28)
+    doc.setFont(undefined, 'bold')
+    doc.setTextColor(255, 255, 255)
+    doc.text('Rx', margin + 5, y + 10)
+    
+    y += 25
+
+    // Medication section with border
+    doc.setDrawColor(59, 130, 246) // Blue-500
+    doc.setLineWidth(0.5)
+    doc.rect(margin, y, pageWidth - 2 * margin, 50, 'S')
+    
+    y += 10
+    doc.setFontSize(13)
+    doc.setFont(undefined, 'bold')
+    doc.setTextColor(37, 99, 235) // Blue-600
+    doc.text('MEDICATION DETAILS', margin + 5, y)
+    
+    y += 10
+    doc.setFontSize(11)
+    doc.setTextColor(30, 41, 59) // Slate-800
+    doc.setFont(undefined, 'bold')
+    doc.text('Drug:', margin + 10, y)
+    doc.setFont(undefined, 'normal')
+    doc.text(`${drugName}`, margin + 35, y)
+    
     if (dosage) {
-      doc.text(`Dosage: ${dosage}`, margin + 10, y)
-      y += 8
+      y += 7
+      doc.setFont(undefined, 'bold')
+      doc.text('Dosage:', margin + 10, y)
+      doc.setFont(undefined, 'normal')
+      doc.text(`${dosage}`, margin + 35, y)
     }
+    
     if (frequency) {
-      doc.text(`Frequency: ${frequency}`, margin + 10, y)
-      y += 8
+      y += 7
+      doc.setFont(undefined, 'bold')
+      doc.text('Frequency:', margin + 10, y)
+      doc.setFont(undefined, 'normal')
+      doc.text(`${frequency}`, margin + 35, y)
     }
+    
     if (duration) {
-      doc.text(`Duration: ${duration}`, margin + 10, y)
-      y += 8
+      y += 7
+      doc.setFont(undefined, 'bold')
+      doc.text('Duration:', margin + 10, y)
+      doc.setFont(undefined, 'normal')
+      doc.text(`${duration}`, margin + 35, y)
     }
 
-    // Safety warning if present
+    // Safety warning if present (with red alert box)
     if (safetyWarning && safetyWarning.hasAllergy) {
-      y += 10
-      doc.setTextColor(200, 0, 0)
-      doc.setFontSize(10)
+      y += 20
+      doc.setFillColor(254, 226, 226) // Red-100
+      doc.setDrawColor(220, 38, 38) // Red-600
+      doc.setLineWidth(1)
+      doc.roundedRect(margin - 5, y - 5, pageWidth - 2 * margin + 10, 25, 3, 3, 'FD')
+      
+      doc.setTextColor(220, 38, 38) // Red-600
+      doc.setFontSize(12)
       doc.setFont(undefined, 'bold')
       doc.text('⚠ ALLERGY ALERT', margin, y)
-      y += 6
+      
+      y += 8
+      doc.setFontSize(10)
       doc.setFont(undefined, 'normal')
+      doc.setTextColor(153, 27, 27) // Red-800
       doc.text(safetyWarning.allergyDetails || 'Patient has known allergies', margin, y)
-      doc.setTextColor(0, 0, 0)
-      y += 10
+      y += 15
+    } else {
+      y += 20
     }
 
-    // Signature
-    y += 20
+    // Footer section
+    y = pageHeight - 50
+    doc.setDrawColor(203, 213, 225) // Slate-300
+    doc.setLineWidth(0.5)
+    doc.line(margin, y, pageWidth - margin, y)
+    
+    y += 10
     doc.setFontSize(10)
-    doc.text('_________________________', margin, y)
-    y += 7
-    doc.text('Doctor Signature', margin, y)
+    doc.setTextColor(30, 41, 59) // Slate-800
+    doc.setFont(undefined, 'bold')
+    doc.text('Doctor Signature:', margin, y)
+    doc.setFont(undefined, 'normal')
+    doc.text('_________________________', margin + 45, y)
+    
+    // Bottom badge
+    y = pageHeight - 20
+    doc.setFillColor(59, 130, 246) // Blue-500
+    doc.roundedRect(margin, y - 3, 60, 8, 2, 2, 'F')
+    doc.setFontSize(8)
+    doc.setFont(undefined, 'bold')
+    doc.setTextColor(255, 255, 255)
+    doc.text('Powered by SummAID', margin + 30, y + 2, { align: 'center' })
 
     // Prepare filename
     const fname = `prescription_${drugName.replace(/\s+/g, '_')}_${new Date().toISOString().split('T')[0]}.pdf`
