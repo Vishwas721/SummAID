@@ -473,7 +473,19 @@ export function ToolsSidebar({ patientId }) {
                   <div className="p-4 rounded-lg border-2 border-yellow-500 bg-yellow-50 dark:bg-yellow-900/20"><div className="flex items-start gap-3"><AlertTriangle className="h-6 w-6 text-yellow-600 dark:text-yellow-400"/><div><p className="text-base font-semibold text-yellow-800 dark:text-yellow-200">⚠️ Warnings</p><ul className="space-y-1 text-sm">{safetyWarning.warnings.map((w,i)=><li key={i} className="text-yellow-700 dark:text-yellow-300">• {w}</li>)}</ul></div></div></div>
                 )}
 
-                <button onClick={handlePrintPrescription} disabled={!drugName.trim() || !safetyCheckDone} className={cn('w-full py-3 rounded-lg font-semibold flex items-center justify-center gap-2', !drugName.trim() || !safetyCheckDone ? 'bg-slate-300 dark:bg-slate-700 text-slate-500 cursor-not-allowed' : 'bg-green-500 text-white hover:bg-green-600') }><Printer className="h-5 w-5"/>{safetyCheckDone ? 'Print Prescription' : 'Run Safety Check First'}</button>
+                <button 
+                  onClick={handlePrintPrescription} 
+                  disabled={!drugName.trim() || !safetyCheckDone || (safetyWarning && safetyWarning.hasAllergy)} 
+                  className={cn(
+                    'w-full py-3 rounded-lg font-semibold flex items-center justify-center gap-2', 
+                    !drugName.trim() || !safetyCheckDone || (safetyWarning && safetyWarning.hasAllergy)
+                      ? 'bg-slate-300 dark:bg-slate-700 text-slate-500 cursor-not-allowed' 
+                      : 'bg-green-500 text-white hover:bg-green-600'
+                  )}
+                >
+                  <Printer className="h-5 w-5"/>
+                  {!safetyCheckDone ? 'Run Safety Check First' : (safetyWarning && safetyWarning.hasAllergy) ? 'Cannot Prescribe - Allergy Detected' : 'Print Prescription'}
+                </button>
               </div>
             )}
           </div>

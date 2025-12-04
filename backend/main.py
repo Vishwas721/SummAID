@@ -1632,21 +1632,19 @@ async def safety_check(
         for chunk_id, report_id, chunk_text, metadata in all_chunks:
             chunk_lower = chunk_text.lower()
             
-            # Check if this chunk mentions the specific drug
-            if drug_lower in chunk_lower:
+            # Check if this chunk mentions the specific drug AND allergy keywords together
+            if drug_lower in chunk_lower and any(kw in chunk_lower for kw in allergy_keywords):
                 # Drug mentioned in allergy-related context
                 has_allergy = True
-                warnings.append(f"Patient has documented information about {drug_name} in medical history")
+                warnings.append(f"⚠️ Patient may be allergic to {drug_name}")
                 
                 # Extract relevant lines
                 lines = chunk_text.split('\n')
                 for line in lines:
                     if drug_lower in line.lower() and any(kw in line.lower() for kw in allergy_keywords):
                         allergy_details_parts.append(line.strip())
-            
-            # Check for general allergy keywords
-            if any(kw in chunk_lower for kw in allergy_keywords):
-                # Build citation
+                
+                # Build citation only if drug is mentioned with allergy
                 citations.append({
                     "chunk_id": chunk_id,
                     "report_id": report_id,
@@ -1657,14 +1655,9 @@ async def safety_check(
         # 6. Compile response
         allergy_details = ' | '.join(allergy_details_parts) if allergy_details_parts else None
         
-        if not allergy_details and citations:
-            # Found allergy mentions but not specifically about this drug
-            allergy_details = "Allergy history found in patient records. Please review citations for details."
-            warnings.append("Patient has documented allergies in medical history - review before prescribing")
-        
         response = SafetyCheckResponse(
-            has_allergy=has_allergy or len(warnings) > 0,
-            warnings=warnings,
+            has_allergy=has_allergy,
+            warnings=warnings if has_allergy else [],
             allergy_details=allergy_details,
             citations=citations
         )

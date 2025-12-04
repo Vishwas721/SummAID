@@ -1815,16 +1815,16 @@ export function PatientChartView({ patientId }) {
                       
                       <button
                         onClick={handlePrintPrescription}
-                        disabled={!drugName.trim() || !safetyCheckDone}
+                        disabled={!drugName.trim() || !safetyCheckDone || (safetyWarning && safetyWarning.hasAllergy)}
                         className={cn(
                           "flex-1 px-4 py-2.5 text-sm font-medium rounded-md transition-all flex items-center justify-center gap-2",
-                          (!drugName.trim() || !safetyCheckDone)
+                          (!drugName.trim() || !safetyCheckDone || (safetyWarning && safetyWarning.hasAllergy))
                             ? "bg-slate-200 dark:bg-slate-700 text-slate-400 cursor-not-allowed"
                             : "bg-blue-500 text-white hover:bg-blue-600"
                         )}
                       >
                         <FileText className="h-4 w-4" />
-                        {safetyCheckDone ? 'Print Prescription' : 'Run Safety Check First'}
+                        {!safetyCheckDone ? 'Run Safety Check First' : (safetyWarning && safetyWarning.hasAllergy) ? 'Cannot Prescribe - Allergy' : 'Print Prescription'}
                       </button>
                     </div>
                     

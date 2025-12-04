@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 
 # Load LLM model from environment variable (default: llama3:8b)
 DEFAULT_MODEL = os.getenv('LLM_MODEL', 'llama3:8b')
-LLM_TIMEOUT = 60  # Timeout for LLM calls in seconds
+LLM_TIMEOUT = 120  # Timeout for LLM calls in seconds
 
 # =============================================================================
 # PARALLEL PROMPT SYSTEM FOR STRUCTURED EXTRACTION
@@ -296,38 +296,32 @@ async def _extract_oncology_data(context: str, model: str) -> Optional[Dict[str,
     Returns:
         Oncology data dict or None if extraction fails
     """
-    prompt = f"""Extract oncology data from the medical reports and return ONLY valid JSON.
+    prompt = f"""Extract oncology data from medical reports. Return ONLY valid JSON, no explanations.
 
-Extract:
-1. Tumor size measurements with dates (look for measurements in cm, dimensions)
-2. TNM staging (e.g., T2N0M0)
-3. Cancer type
-4. Grade
-5. Biomarkers (ER, PR, HER2, Ki-67, etc.)
-6. Treatment response
-7. **PERTINENT NEGATIVES**: List major oncology findings that are ABSENT (e.g., "No metastasis", "No lymph node involvement", "No distant spread")
+Extract from the text below:
+- Tumor measurements (size in cm, dates)
+- TNM staging
+- Cancer type and grade
+- Biomarkers (ER, PR, HER2, Ki-67)
+- Treatment response
+- Pertinent negatives (what's absent: no metastasis, no spread, etc.)
 
-TREND ANALYSIS INSTRUCTIONS:
-- For tumor_size_trend: If multiple measurements exist, analyze the trend
-- Compare latest value to earliest value
-- Assign status: "IMPROVING" (decreasing size), "WORSENING" (increasing size), "STABLE" (no significant change)
-- For biomarkers: Mark as "HIGH", "LOW", or "NORMAL" based on clinical context
+For tumor_size_trend: If multiple measurements exist, compare latest to earliest.
+Status: "IMPROVING" (smaller), "WORSENING" (larger), "STABLE" (no change)
 
-RETURN ONLY THIS JSON STRUCTURE (use null for missing data):
+JSON FORMAT (use null if not found):
 {{
-  "tumor_size_trend": [
-    {{"date": "YYYY-MM-DD", "size_cm": 2.3, "status": "IMPROVING"}}
-  ],
+  "tumor_size_trend": [{{"date": "YYYY-MM-DD", "size_cm": 2.3, "status": "IMPROVING"}}],
   "tnm_staging": "T2N0M0",
-  "cancer_type": "Cancer type",
-  "grade": "Grade description",
-  "biomarkers": {{"ER": "positive", "PR": "positive"}},
-  "treatment_response": "Response description",
-  "pertinent_negatives": ["No metastasis", "No lymph node involvement"]
+  "cancer_type": "Breast Cancer",
+  "grade": "Grade 2",
+  "biomarkers": {{"ER": "positive", "PR": "positive", "HER2": "negative"}},
+  "treatment_response": "Partial response",
+  "pertinent_negatives": ["No metastasis"]
 }}
 
-Medical Reports:
-{context[:8000]}
+Reports:
+{context[:6000]}
 
 JSON:"""
     
