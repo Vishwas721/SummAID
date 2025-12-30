@@ -18,6 +18,7 @@ import logging
 import os
 from typing import List, Optional, Dict, Any
 from datetime import datetime
+import re
 import requests
 
 logger = logging.getLogger(__name__)
@@ -147,20 +148,37 @@ async def _extract_evolution(context: str, specialty: str, model: str) -> str:
     """
     prompt = f"""You are a medical AI. Write a concise 2-3 sentence narrative describing the patient's medical journey from diagnosis to current state.
 
-Focus on:
-- Initial presentation/diagnosis
-- Key treatments or interventions
-- Current status
-- **PERTINENT NEGATIVES**: Include crucial conditions that were checked but are ABSENT (e.g., "No metastasis", "No lymph node involvement", "No conductive component")
+    
+**MANDATORY RULES - YOU MUST FOLLOW THESE:**
+
+1. **READ ONLY from the source documents. Do not fabricate timelines or events.**
+    - Extract dates, procedures, and findings EXACTLY as stated in the reports.
+    - If a timeline is unclear, write: "Timeline unclear from documentation."
+
+2. **DETECT AND FLAG CRITICAL CONTRADICTIONS immediately.**
+    - After lumpectomy (tumor removal), there should be NO primary tumor mass.
+    - If reports show: "Lumpectomy" + "Tumor 3.2 cm → 0.9 cm shrinking" = CONTRADICTION
+    - You MUST flag: "⚠️ CRITICAL CONTRADICTION: Post-lumpectomy tumors should not exist. Source documents may conflate neoadjuvant therapy (pre-surgical) with adjuvant therapy (post-surgical). REVIEW SOURCE DOCUMENTS."
+    - If you see chemotherapy dates BEFORE surgery AND tumor shrinkage, this indicates neoadjuvant therapy, not adjuvant.
+
+3. **Do NOT add events or findings not in the source.**
+    - Do not write "patient received 6 cycles of chemotherapy" if the sources only say "chemotherapy planned" or "started".
+    - Do not invent treatment dates, dosages, or responses not explicitly documented.
+
+4. **List only pertinent negatives that are EXPLICITLY documented.**
+    - WRONG: "No metastasis" (if imaging reports don't mention metastasis)
+    - RIGHT: "No distant metastasis detected on staging imaging" (if imaging report states this)
+
+Write 2-3 sentences describing the EXACT timeline from the source documents. Flag any contradictions with ⚠️ CRITICAL CONTRADICTION prefix.
 
 Medical Reports:
 {context[:8000]}
 
-Narrative (2-3 sentences):"""
+Narrative (2-3 sentences, must flag contradictions):"""
     
     try:
         result = await asyncio.wait_for(
-            _call_llm_async(prompt, model, temperature=0.2),
+            _call_llm_async(prompt, model, temperature=0.0),
             timeout=LLM_TIMEOUT
         )
         
@@ -188,12 +206,25 @@ async def _extract_current_status(context: str, specialty: str, model: str) -> L
     """
     prompt = f"""Extract the patient's CURRENT medical status as 3-5 concise bullet points.
 
-Focus on:
-- Current symptoms or conditions
-- Latest test results or findings
+**ZERO-TOLERANCE RULES (NO HALLUCINATIONS):**
+1) ONLY USE FACTS explicitly documented in the source. If it's not written, DO NOT include it.
+2) PERTINENT NEGATIVES REQUIRE EXPLICIT TEXT.
+   - FORBIDDEN: "No fever" (if fever is never mentioned)
+   - FORBIDDEN: "No bleeding" (if not explicitly documented)
+   - FORBIDDEN: "Current symptoms: None reported" (unless source explicitly says no symptoms reported)
+   - ALLOWED: "Afebrile on exam" (if exam documents afebrile)
+   - ALLOWED: "No active bleeding noted" (if exam documents this)
+   - ALLOWED: "No distant metastasis on staging CT" (if imaging states this)
+3) DO NOT CREATE A SYMPTOM REVIEW if the source has none. If reports only discuss tumor size/treatment, list only those documented findings.
+4) DO NOT ASSUME "NOT MENTIONED" = "ABSENT". Absence of mention means DO NOT write it.
+5) Keep to the latest evidence in the reports (current state, active issues, current treatment).
+
+Focus on (ONLY if documented):
+- Current symptoms/complaints
+- Latest objective findings (imaging/labs) with values if provided
 - Current treatment status
 - Active issues
-- **PERTINENT NEGATIVES**: Explicitly list major conditions or symptoms that were RULED OUT or are ABSENT (e.g., "No fever", "No bleeding", "No progression")
+- Documented pertinent negatives (only if explicitly stated)
 
 RETURN ONLY bullet points, one per line, starting with a dash. No other text.
 
@@ -205,7 +236,7 @@ Current Status:
     
     try:
         result = await asyncio.wait_for(
-            _call_llm_async(prompt, model, temperature=0.1),
+            _call_llm_async(prompt, model, temperature=0.0),
             timeout=LLM_TIMEOUT
         )
         
@@ -243,6 +274,12 @@ async def _extract_plan(context: str, specialty: str, model: str) -> List[str]:
         List of plan bullet points or error list
     """
     prompt = f"""Extract the treatment PLAN and next steps as 3-5 concise bullet points.
+
+Temporal Safety Rules (critical):
+- Forward-only: derive the plan from the LATEST evidence in the reports.
+- Exclude items already COMPLETED or with dates in the PAST relative to the latest report date.
+- If a plan item is uncertain or lacking explicit support, omit it rather than guess.
+- Do not restate current status items; include only actionable NEXT STEPS.
 
 Focus on:
 - Planned treatments or procedures
@@ -285,6 +322,75 @@ Plan:
     except Exception as e:
         return [f"⚠️ Error: {str(e)}"]
 
+def _extract_dates_from_text(text: str) -> List[datetime]:
+    """Find dates in text (YYYY-MM-DD and MM/DD/YYYY) and return parsed datetimes."""
+    dates: List[datetime] = []
+    # ISO format YYYY-MM-DD
+    for m in re.finditer(r"\b(20\d{2})-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])\b", text):
+        try:
+            dates.append(datetime.strptime(m.group(0), "%Y-%m-%d"))
+        except Exception:
+            pass
+    # US format MM/DD/YYYY
+    for m in re.finditer(r"\b(0[1-9]|1[0-2])/(0[1-9]|[12]\d|3[01])/(20\d{2})\b", text):
+        try:
+            dates.append(datetime.strptime(m.group(0), "%m/%d/%Y"))
+        except Exception:
+            pass
+    return dates
+
+def _latest_context_date(context: str) -> Optional[datetime]:
+    """Return the latest date found in context, if any."""
+    dates = _extract_dates_from_text(context)
+    return max(dates) if dates else None
+
+def _has_completion_keywords(text: str) -> bool:
+    """Detect if text indicates completion/past execution."""
+    t = text.lower()
+    return any(k in t for k in [
+        "completed", "done", "performed", "status: completed", "post-op", "postoperative", "received"
+    ])
+
+def _is_past_dated(text: str, latest_date: Optional[datetime]) -> bool:
+    """Check if text contains a date older than the latest_date."""
+    if not latest_date:
+        return False
+    for d in _extract_dates_from_text(text):
+        if d < latest_date:
+            return True
+    return False
+
+def _apply_temporal_safety_filters(plan: List[str], current_status: List[str], context: str) -> List[str]:
+    """Filter plan bullets to enforce forward-only, latest-evidence rules.
+
+    - Remove items duplicated in current_status
+    - Remove items indicating completion
+    - Remove items with past-dated scheduling compared to latest context date
+    """
+    latest_date = _latest_context_date(context)
+    safe: List[str] = []
+    status_lower = [s.lower() for s in (current_status or [])]
+
+    def is_duplicate(bullet: str) -> bool:
+        bl = bullet.lower()
+        for s in status_lower:
+            if bl in s or s in bl:
+                return True
+        return False
+
+    for b in (plan or []):
+        if not b:
+            continue
+        if _has_completion_keywords(b):
+            continue
+        if _is_past_dated(b, latest_date):
+            continue
+        if is_duplicate(b):
+            continue
+        safe.append(b)
+    # Keep to 5 items max, prefer first ones
+    return safe[:5] if safe else ["Plan information not available"]
+
 async def _extract_oncology_data(context: str, model: str) -> Optional[Dict[str, Any]]:
     """
     Step 3a: Extract oncology-specific structured data.
@@ -306,19 +412,40 @@ Extract from the text below:
 - Treatment response
 - Pertinent negatives (what's absent: no metastasis, no spread, etc.)
 
-For tumor_size_trend: If multiple measurements exist, compare latest to earliest.
-Status: "IMPROVING" (smaller), "WORSENING" (larger), "STABLE" (no change)
+CRITICAL RULES for tumor_size_trend and treatment_response:
+1. **tumor_size_trend is an ARRAY of individual measurements over time (for line chart).**
+   - Extract EACH tumor measurement with its date and size.
+   - Create one entry per measurement date.
+   - Sort chronologically (earliest to latest).
+   - Calculate status by comparing CURRENT measurement to FIRST measurement.
+
+2. **For each measurement, calculate status vs. baseline (first measurement):**
+   - Formula: (current - first) / first × 100
+   - Example: First = 3.2 cm, Current = 0.9 cm → (0.9-3.2)/3.2 = -72%
+   - Status rules:
+     * "IMPROVING" or "PARTIAL RESPONSE": ≥30% reduction vs. baseline
+     * "WORSENING" or "PROGRESSIVE DISEASE": ≥20% increase vs. baseline
+     * "STABLE": <30% change vs. baseline
+
+3. **Only include pertinent negatives explicitly documented** in the source reports (e.g., "imaging shows no metastasis").
 
 JSON FORMAT (use null if not found):
 {{
-  "tumor_size_trend": [{{"date": "YYYY-MM-DD", "size_cm": 2.3, "status": "IMPROVING"}}],
+  "tumor_size_trend": [
+    {{"date": "2024-01-15", "size_cm": 3.2, "status": "STABLE"}},
+    {{"date": "2024-04-14", "size_cm": 2.8, "status": "IMPROVING"}},
+    {{"date": "2024-07-13", "size_cm": 2.1, "status": "IMPROVING"}},
+    {{"date": "2025-01-14", "size_cm": 0.9, "status": "PARTIAL RESPONSE"}}
+  ],
   "tnm_staging": "T2N0M0",
   "cancer_type": "Breast Cancer",
   "grade": "Grade 2",
   "biomarkers": {{"ER": "positive", "PR": "positive", "HER2": "negative"}},
-  "treatment_response": "Partial response",
-  "pertinent_negatives": ["No metastasis"]
+  "treatment_response": "Partial response (>70% reduction)",
+  "pertinent_negatives": ["No metastasis on imaging"]
 }}
+
+IMPORTANT: tumor_size_trend is an ARRAY of time-series measurements. Extract ALL measurements found in reports, sorted chronologically.
 
 Reports:
 {context[:6000]}
@@ -495,11 +622,14 @@ async def _generate_structured_summary_parallel(
             logger.info(f"Speech data extracted: {specialty_data is not None}")
         
         # Step 4: Build structured response following AIResponseSchema
+        # Apply temporal safety filters to plan
+        safe_plan = _apply_temporal_safety_filters(plan, current_status, context)
+
         structured_response = {
             "universal": {
                 "evolution": evolution,
                 "current_status": current_status,
-                "plan": plan
+                "plan": safe_plan
             },
             "oncology": specialty_data if specialty == 'oncology' else None,
             "speech": specialty_data if specialty == 'speech' else None,

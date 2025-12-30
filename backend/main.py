@@ -5,7 +5,7 @@ import unicodedata
 import asyncio
 from typing import List, Optional, Tuple, Dict, Any
 from datetime import datetime
-from fastapi import FastAPI, HTTPException, Body, Path, Request
+from fastapi import FastAPI, HTTPException, Body, Path, Request, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 from database import get_db_connection
@@ -143,6 +143,7 @@ def _sanitize_key(raw: Optional[str]) -> Optional[str]:
 
 # --- Configuration Loading & Validation ---
 DATABASE_URL = os.getenv("DATABASE_URL")
+DEMO_MODE = os.getenv("DEMO_MODE", "0") == "1"
 
 # ⚠️ SECURITY WARNING ⚠️
 # This .env-based encryption key management is STRICTLY for Phase 1 prototype only.
@@ -154,7 +155,10 @@ ENCRYPTION_KEY = _sanitize_key(os.getenv("ENCRYPTION_KEY"))
 FRONTEND_ORIGIN = os.getenv("FRONTEND_ORIGIN", "http://localhost:5173")
 
 if not DATABASE_URL or not ENCRYPTION_KEY:
-    raise ValueError("DATABASE_URL and ENCRYPTION_KEY must be set in .env file")
+    if DEMO_MODE:
+        logger.warning("DEMO_MODE=1: Skipping DATABASE_URL/ENCRYPTION_KEY requirement for demo endpoints")
+    else:
+        raise ValueError("DATABASE_URL and ENCRYPTION_KEY must be set in .env file")
 # --- End Configuration ---
 
 
@@ -754,6 +758,245 @@ def _normalize_text(s: str) -> str:
     s = '\n'.join(' '.join(line.split()) for line in s.split('\n'))
     return s.strip()
 
+# ---------------------------------------------------------------------------------
+# DEMO MODE: lightweight PDF → summary endpoint (no database required)
+# ---------------------------------------------------------------------------------
+@app.post("/demo/summarize")
+async def demo_summarize(
+    request: Request,
+    file: UploadFile = File(..., description="PDF file to summarize")
+):
+    """Summarize an uploaded PDF without using the database.
+
+    Workflow:
+    1. Read PDF pages using PyMuPDF (fitz) and extract text per page
+    2. Build a full context string and lightweight citations (page + preview)
+    3. Call parallel summary generation and return AIResponseSchema-shaped data
+
+    Notes:
+    - Requires local LLM via Ollama (models pulled per config)
+    - Intended for doctor trials, avoids DB setup and patient seeding
+    """
+    if not DEMO_MODE:
+        raise HTTPException(status_code=400, detail="DEMO endpoint available only when DEMO_MODE=1")
+
+    # Validate content type
+    content_type = file.content_type or ""
+    if "pdf" not in content_type.lower() and not file.filename.lower().endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="Please upload a PDF file")
+
+    # Read file into memory and extract text
+    try:
+        import fitz  # PyMuPDF
+        from pathlib import Path
+        name = Path(file.filename).stem or "Uploaded Report"
+
+        data = await file.read()
+        doc = fitz.open(stream=data, filetype="pdf")
+        pages_text: List[Tuple[str, int]] = []
+        for page_idx in range(doc.page_count):
+            page = doc.load_page(page_idx)
+            text = (page.get_text() or "").strip()
+            pages_text.append((text, page_idx + 1))
+        doc.close()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to read PDF: {e}")
+
+    # Build full context and citations
+    full_context = "\n\n".join(t for t, _p in pages_text if t)
+    if not full_context:
+        raise HTTPException(status_code=400, detail="No extractable text found in PDF")
+
+    PREVIEW_LEN = 180
+    citations = []
+    for text, page_num in pages_text:
+        if not text:
+            continue
+        preview = _normalize_text(text)[:PREVIEW_LEN]
+        if len(text) > PREVIEW_LEN:
+            preview += "…"
+        citations.append({
+            "source_chunk_id": None,
+            "report_id": None,
+            "source_text_preview": preview,
+            "source_full_text": _normalize_text(text),
+            "source_metadata": {"page": page_num, "chunk_index": 0, "report_type": "Uploaded PDF"},
+            "sections": ["evolution", "key_findings"]
+        })
+
+    # Run the parallel summary generation
+    try:
+        summary_dict = await generate_parallel_summary(
+            full_context=full_context,
+            patient_label=name,
+            patient_type="general"
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Demo summarization error")
+        raise HTTPException(status_code=500, detail=f"Summarization error: {e}")
+
+    # Build response similar to /summarize output (without DB persistence)
+    response_data = {
+        "universal": summary_dict.get("universal", {}),
+        "oncology": summary_dict.get("oncology"),
+        "speech": summary_dict.get("speech"),
+        "specialty": summary_dict.get("specialty", "general"),
+        "generated_at": summary_dict.get("generated_at"),
+        "citations": citations
+    }
+    return response_data
+
+
+# ---------------------------------------------------------------------------------
+# TRIAL WORKFLOW: upload PDFs into local DB to use full workflow
+# ---------------------------------------------------------------------------------
+class TrialPatientCreate(BaseModel):
+    display_name: str
+    demo_id: Optional[str] = None
+    age: Optional[int] = None
+    sex: Optional[str] = None  # "M", "F", or "Unknown"
+
+def _trial_chunk_text(pages_text: List[Tuple[str, int]], chunk_size: int = 500, overlap: int = 100) -> List[Tuple[str, Dict[str, int]]]:
+    chunks: List[Tuple[str, Dict[str, int]]] = []
+    for page_text, page_num in pages_text:
+        if not page_text:
+            continue
+        start = 0
+        idx = 0
+        while start < len(page_text):
+            end = min(start + chunk_size, len(page_text))
+            # try not to break words
+            if end < len(page_text):
+                while end > start and page_text[end] != ' ':
+                    end -= 1
+                if end == start:
+                    end = min(start + chunk_size, len(page_text))
+            chunk = page_text[start:end].strip()
+            if chunk:
+                chunks.append((chunk, {"page": page_num, "chunk_index": idx}))
+                idx += 1
+            start = max(end - overlap, end)
+    return chunks
+
+def _trial_infer_report_type(filename: str) -> str:
+    name = (filename or "").lower()
+    if any(k in name for k in ["mri", "ct", "xray", "radiology", "imaging"]):
+        return "Radiology"
+    if any(k in name for k in ["path", "biopsy", "histology"]):
+        return "Pathology"
+    if any(k in name for k in ["lab", "blood", "cbc"]):
+        return "Laboratory"
+    if any(k in name for k in ["discharge", "summary"]):
+        return "Clinical Summary"
+    return "General"
+
+@app.post("/trial/patient")
+def trial_create_patient(payload: TrialPatientCreate):
+    """Create a demo patient in local DB to attach uploaded PDFs."""
+    if not DATABASE_URL or not ENCRYPTION_KEY:
+        raise HTTPException(status_code=400, detail="Trial workflow requires DATABASE_URL and ENCRYPTION_KEY in .env")
+    demo_id = payload.demo_id or f"patient_{payload.display_name.lower().replace(' ', '_')}"
+    conn = None
+    try:
+        conn = get_db_connection(); cur = conn.cursor()
+        cur.execute(
+            """
+            INSERT INTO patients (patient_demo_id, patient_display_name, age, sex)
+            VALUES (%s, %s, %s, %s)
+            RETURNING patient_id
+            """,
+            (demo_id, payload.display_name, payload.age, payload.sex or "Unknown")
+        )
+        pid = cur.fetchone()[0]
+        conn.commit(); cur.close(); conn.close()
+        return {"patient_id": pid, "patient_demo_id": demo_id}
+    except Exception as e:
+        if conn: conn.rollback()
+        raise HTTPException(status_code=500, detail=f"Create patient error: {e}")
+    finally:
+        if conn: conn.close()
+
+@app.post("/trial/patient/{patient_id}/upload-pdf")
+async def trial_upload_pdf(
+    patient_id: int = Path(..., description="Patient to attach report to"),
+    file: UploadFile = File(..., description="PDF file")
+):
+    """Upload a PDF, store encrypted text + chunks with embeddings, and attach to patient."""
+    if not DATABASE_URL or not ENCRYPTION_KEY:
+        raise HTTPException(status_code=400, detail="Trial workflow requires DATABASE_URL and ENCRYPTION_KEY in .env")
+
+    # Validate patient exists
+    conn = get_db_connection(); cur = conn.cursor()
+    cur.execute("SELECT patient_id FROM patients WHERE patient_id=%s", (patient_id,))
+    if not cur.fetchone():
+        cur.close(); conn.close()
+        raise HTTPException(status_code=404, detail=f"Patient {patient_id} not found")
+
+    # Read PDF
+    try:
+        import fitz
+        data = await file.read()
+        doc = fitz.open(stream=data, filetype="pdf")
+        pages_text: List[Tuple[str,int]] = []
+        for i in range(doc.page_count):
+            page = doc.load_page(i)
+            text = (page.get_text() or "").strip()
+            pages_text.append((text, i+1))
+        doc.close()
+    except Exception as e:
+        cur.close(); conn.close()
+        raise HTTPException(status_code=500, detail=f"Failed to read PDF: {e}")
+
+    full_text = "\n\n".join(t for t,_p in pages_text if t)
+    if not full_text:
+        cur.close(); conn.close()
+        raise HTTPException(status_code=400, detail="No extractable text found in PDF")
+
+    # Create report row
+    report_type = _trial_infer_report_type(file.filename)
+    report_path = f"uploaded://{file.filename}"
+    try:
+        cur.execute(
+            """
+            INSERT INTO reports (patient_id, report_filepath_pointer, report_type, report_text_encrypted)
+            VALUES (%s, %s, %s, pgp_sym_encrypt(%s, %s))
+            RETURNING report_id
+            """,
+            (patient_id, report_path, report_type, full_text, ENCRYPTION_KEY)
+        )
+        report_id = cur.fetchone()[0]
+    except Exception as e:
+        conn.rollback(); cur.close(); conn.close()
+        raise HTTPException(status_code=500, detail=f"Failed to insert report: {e}")
+
+    # Chunk and embed
+    chunks = _trial_chunk_text(pages_text)
+    inserted = 0
+    try:
+        for chunk_text, meta in chunks:
+            vec = _embed_text(chunk_text)
+            if len(vec) != 768:
+                raise HTTPException(status_code=500, detail=f"Embedding dimension {len(vec)} != 768")
+            cur.execute(
+                """
+                INSERT INTO report_chunks (report_id, chunk_text_encrypted, report_vector, source_metadata)
+                VALUES (%s, pgp_sym_encrypt(%s, %s), %s, %s)
+                """,
+                (report_id, chunk_text, ENCRYPTION_KEY, vec, json.dumps({**meta, "report_type": report_type}))
+            )
+            inserted += 1
+        conn.commit()
+    except HTTPException:
+        conn.rollback(); cur.close(); conn.close(); raise
+    except Exception as e:
+        conn.rollback(); cur.close(); conn.close()
+        raise HTTPException(status_code=500, detail=f"Failed to insert chunks: {e}")
+
+    cur.close(); conn.close()
+    return {"report_id": report_id, "chunks": inserted, "report_type": report_type}
+
 @app.post("/summarize/{patient_id}")
 async def summarize_patient(
     request: Request,
@@ -795,20 +1038,77 @@ async def summarize_patient(
         cur.close()
         conn.close()
         
-        # 2. Retrieve all chunks from database (with metadata for citations)
+        # 2. Fetch previous AI summary (if exists) for continuity: old_summary + new_reports = new_summary
+        logger.info(f"Checking for previous summary for patient {patient_id}")
+        previous_summary_text = None
+        try:
+            conn_prev = get_db_connection()
+            cur_prev = conn_prev.cursor()
+            cur_prev.execute("""
+                SELECT summary_text 
+                FROM patient_summaries 
+                WHERE patient_id=%s 
+                ORDER BY generated_at DESC 
+                LIMIT 1
+            """, (patient_id,))
+            prev_row = cur_prev.fetchone()
+            if prev_row and prev_row[0]:
+                previous_summary_text = prev_row[0]
+                logger.info(f"Previous summary found for patient {patient_id} ({len(previous_summary_text)} chars)")
+            cur_prev.close()
+            conn_prev.close()
+        except Exception as e:
+            logger.warning(f"Could not retrieve previous summary for patient {patient_id}: {e}")
+        
+        # 3. Retrieve all chunks from database (with metadata for citations)
         logger.info(f"Retrieving chunks for patient {patient_id}")
         chunk_data = get_all_chunks_for_patient(patient_id)
         
-        # 3. Check if empty
+        # 4. Check if empty
         if not chunk_data:
             raise HTTPException(status_code=404, detail=f"No text chunks found for patient_id={patient_id}")
         
-        # 4. Extract text for context and prepare citations
+        # 5. Extract text for context and prepare citations
         chunk_texts = [chunk[2] for chunk in chunk_data]  # Extract chunk_text
         full_context = "\n\n".join(chunk_texts)
         logger.info(f"Context prepared: {len(full_context)} characters from {len(chunk_data)} chunks")
         
-        # Build citations array with preview and full text
+        # 5a. Inject previous summary as high-priority context for continuity (old baseline + new reports)
+        if previous_summary_text:
+            try:
+                prev_summary_obj = json.loads(previous_summary_text)
+                previous_context_parts = []
+                
+                # Extract key sections from previous summary for context
+                if prev_summary_obj.get("universal"):
+                    universal = prev_summary_obj["universal"]
+                    if universal.get("evolution"):
+                        previous_context_parts.append(f"[PREVIOUS SUMMARY - Evolution/Medical Journey]\n{universal['evolution']}")
+                    if universal.get("current_status"):
+                        status_list = universal.get("current_status", [])
+                        if isinstance(status_list, list):
+                            status_text = "\n".join(f"- {s}" for s in status_list)
+                        else:
+                            status_text = str(status_list)
+                        previous_context_parts.append(f"[PREVIOUS SUMMARY - Current Status]\n{status_text}")
+                
+                # Add previous oncology/speech data if present
+                if prev_summary_obj.get("oncology"):
+                    onco_str = json.dumps(prev_summary_obj["oncology"], indent=2)
+                    previous_context_parts.append(f"[PREVIOUS SUMMARY - Oncology Data]\n{onco_str}")
+                if prev_summary_obj.get("speech"):
+                    speech_str = json.dumps(prev_summary_obj["speech"], indent=2)
+                    previous_context_parts.append(f"[PREVIOUS SUMMARY - Speech/Audiology Data]\n{speech_str}")
+                
+                if previous_context_parts:
+                    previous_context_str = "\n\n".join(previous_context_parts)
+                    # Prepend previous summary to full context for continuity
+                    full_context = f"{previous_context_str}\n\n[NEW REPORTS - Latest Medical Records]\n{full_context}"
+                    logger.info(f"Injected previous summary as context for continuity (total context: {len(full_context)} chars)")
+            except Exception as e:
+                logger.warning(f"Could not parse/inject previous summary: {e}; proceeding with new reports only")
+        
+        # 6. Build citations array with preview and full text
         PREVIEW_LEN = 160
         def _classify_sections(chunk_text: str, metadata: dict) -> list:
             """Heuristic mapping of a source chunk to summary sections.
@@ -857,15 +1157,15 @@ async def summarize_patient(
                 "sections": sections
             })
         
-        # 5. Generate summary using parallel prompt system
-        logger.info(f"Generating parallel summary for patient {patient_id} ({patient_type})")
+        # 7. Generate summary using parallel prompt system
+        logger.info(f"Generating parallel summary for patient {patient_id} ({patient_type}) with continuity context")
         summary_dict = await generate_parallel_summary(
             full_context=full_context,
             patient_label=label,
             patient_type=patient_type
         )
         
-        # 6. Build response with AIResponseSchema structure + citations
+        # 8. Build response with AIResponseSchema structure + citations
         # summary_dict now contains: {universal, oncology, speech, specialty, generated_at}
         response_data = {
             "universal": summary_dict.get("universal", {}),
@@ -876,7 +1176,7 @@ async def summarize_patient(
             "citations": citations
         }
         
-        # 7. Persist summary to database
+        # 9. Persist summary to database
         ensure_summary_support()
         try:
             conn2 = get_db_connection()
