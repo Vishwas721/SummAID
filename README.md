@@ -229,7 +229,7 @@ Fetch merged summary (AI + latest doctor edits).
 }
 ```
 
-See backend API docs at `http://localhost:8002/docs` for full endpoint details.
+See backend API docs at `http://localhost:8000/docs` for full endpoint details.
 
 ## Testing the Chat Endpoint
 
