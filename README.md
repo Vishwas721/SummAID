@@ -402,7 +402,7 @@ See [documents/Plan for Collecting and Using Data.md](documents/Plan for Collect
 ### Issue: "Allergy check says patient is allergic to every drug"
 **Fix**: This was a bug in early versions. Update to latest code; safety check now requires drug + allergy keyword co-occurrence.
 
-### Issue: "Oncology infographics not appearing"
+### Issue: "Oncology infographics not appearing",
 **Fix**: Oncology extraction has 120s timeout. Regenerate summary or check backend logs for timeout errors.
 
 ### Issue: "Frontend cannot connect to backend (CORS error)"
